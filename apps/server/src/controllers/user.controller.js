@@ -176,4 +176,40 @@ const deleteUser = async (req, res, next) => {
   }
 };
 
-module.exports = { register, login, refresh, logout, getUser, updateLocation, updateStatus, deleteUser };
+const updateProfile = async (req, res, next) => {
+  try {
+    const { displayName, avatarUrl, languages } = req.body;
+    const updates = {};
+    if (displayName !== undefined) updates.displayName = displayName;
+    if (avatarUrl !== undefined) updates.avatarUrl = avatarUrl;
+    if (languages !== undefined) updates.languages = languages;
+
+    const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true, runValidators: true });
+    return res.status(200).json({ data: user });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const blockUser = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    if (userId === req.user._id.toString()) return res.status(400).json({ message: "Cannot block yourself" });
+    await User.findByIdAndUpdate(req.user._id, { $addToSet: { blockedUsers: userId } });
+    return res.status(200).json({ message: "User blocked" });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const unblockUser = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    await User.findByIdAndUpdate(req.user._id, { $pull: { blockedUsers: userId } });
+    return res.status(200).json({ message: "User unblocked" });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+module.exports = { register, login, refresh, logout, getUser, updateLocation, updateStatus, deleteUser, updateProfile, blockUser, unblockUser };

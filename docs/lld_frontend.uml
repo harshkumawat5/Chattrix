@@ -241,8 +241,21 @@ UI --> User : 🎥 remote video appears\n"Connecting..." → connected
 note right of UI
   Text chat panel (💬 button):
   send-message → socket relay → receive-message
+  Typing indicator: emit typing → peer-typing → bouncing dots
   Unread badge when panel closed
   In-memory only — cleared on session end
+  --
+  Connection quality (🟢🟡🔴):
+  pc.getStats() polled every 3s
+  RTT < 100ms=good, < 300ms=fair, > 300ms=poor
+  --
+  Auto-reconnect on ICE drop:
+  pc.oniceconnectionstatechange → disconnected/failed
+  → createOffer({ iceRestart: true }) after 2s
+  --
+  Block user (🚫 button):
+  POST /api/users/block/:userId
+  Blocked users excluded from future matches
 end note
 
 ' ═══════════════════════════════════════════════════════
@@ -271,6 +284,13 @@ UI -> Socket : emit("send-message", { sessionId, text })
 Socket -> Backend : relay
 Backend --> Socket : receive-message to other peer
 UI --> User : message bubble (mine=right, theirs=left)
+
+note right of UI
+  Typing indicator:
+  emit typing { isTyping: true } on keystroke
+  emit typing { isTyping: false } after 1.5s idle
+  peer-typing → bouncing dots shown
+end note
 
 ' ═══════════════════════════════════════════════════════
 == 🔚 STEP 7 — End / Skip ==
@@ -341,6 +361,7 @@ note over User, Backend
   /login             Login       — email only
   /preferences       Preferences — distance slider + mode (Guard)
   /match             Match       — mode cards + find match (Guard)
+  /profile           Profile     — edit displayName, avatarUrl, languages (Guard)
   /call/:sessionId   Call        — WebRTC video + text chat panel (Guard)
   /chat/:sessionId   Chat        — text-only fullscreen chat (Guard)
   /ended             Ended       — session ended screen (Guard)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getSocket, getPendingPeerLeft, clearPendingPeerLeft } from "../lib/socket";
 import { api } from "../lib/api";
@@ -17,17 +17,21 @@ export default function Call() {
   const queueRef   = useRef([]);
   const offeredRef = useRef(false);
   const chatEndRef = useRef(null);
+  const typingTimer = useRef(null);
+  const peerUserIdRef = useRef(null);
 
-  const [connected,  setConnected]  = useState(false);
-  const [muted,      setMuted]      = useState(false);
-  const [camOff,     setCamOff]     = useState(false);
-  const [duration,   setDuration]   = useState(0);
-  const [chatOpen,   setChatOpen]   = useState(false);
-  const [messages,   setMessages]   = useState([]);
-  const [msgInput,   setMsgInput]   = useState("");
-  const [unread,     setUnread]     = useState(0);
+  const [connected,    setConnected]    = useState(false);
+  const [muted,        setMuted]        = useState(false);
+  const [camOff,       setCamOff]       = useState(false);
+  const [duration,     setDuration]     = useState(0);
+  const [chatOpen,     setChatOpen]     = useState(false);
+  const [messages,     setMessages]     = useState([]);
+  const [msgInput,     setMsgInput]     = useState("");
+  const [unread,       setUnread]       = useState(0);
+  const [peerTyping,   setPeerTyping]   = useState(false);
+  const [connQuality,  setConnQuality]  = useState(null); // "good"|"fair"|"poor"
+  const [blocked,      setBlocked]      = useState(false);
 
-  // scroll chat to bottom on new message
   useEffect(() => {
     if (chatOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -35,13 +39,37 @@ export default function Call() {
     }
   }, [messages, chatOpen]);
 
+  // ── connection quality via getStats ───────────────────────────
+  const checkQuality = useCallback(async () => {
+    const pc = pcRef.current;
+    if (!pc || !connected) return;
+    try {
+      const stats = await pc.getStats();
+      let rtt = null;
+      stats.forEach((s) => {
+        if (s.type === "candidate-pair" && s.state === "succeeded" && s.currentRoundTripTime != null) {
+          rtt = s.currentRoundTripTime * 1000; // ms
+        }
+      });
+      if (rtt === null) return;
+      if (rtt < 100)       setConnQuality("good");
+      else if (rtt < 300)  setConnQuality("fair");
+      else                 setConnQuality("poor");
+    } catch {}
+  }, [connected]);
+
+  useEffect(() => {
+    const t = setInterval(checkQuality, 3000);
+    return () => clearInterval(t);
+  }, [checkQuality]);
+
   useEffect(() => {
     const socket = getSocket();
     if (!socket) { navigate("/match"); return; }
 
     if (getPendingPeerLeft()) {
       clearPendingPeerLeft();
-      navigate("/ended");
+      navigate("/match?autostart=video");
       return;
     }
 
@@ -54,8 +82,51 @@ export default function Call() {
       queueRef.current = [];
     };
 
+    // ── create / recreate PC (used for reconnect too) ──────────
+    const createPC = (iceServers) => {
+      const pc = new RTCPeerConnection({ iceServers });
+      pcRef.current = pc;
+
+      pc.ontrack = (e) => {
+        if (cancelled) return;
+        if (remoteRef.current) remoteRef.current.srcObject = e.streams[0];
+        setConnected(true);
+      };
+
+      pc.onicecandidate = (e) => {
+        if (cancelled || !e.candidate) return;
+        socket.emit("ice-candidate", { sessionId, candidate: e.candidate });
+      };
+
+      // #7 — reconnect on ICE failure
+      pc.oniceconnectionstatechange = () => {
+        if (cancelled) return;
+        const state = pc.iceConnectionState;
+        if (state === "disconnected" || state === "failed") {
+          setConnected(false);
+          setConnQuality(null);
+          // attempt restart after 2s
+          setTimeout(async () => {
+            if (cancelled || !pcRef.current) return;
+            try {
+              offeredRef.current = false;
+              const offer = await pc.createOffer({ iceRestart: true });
+              await pc.setLocalDescription(offer);
+              socket.emit("offer", { sessionId, offer });
+            } catch {}
+          }, 2000);
+        }
+        if (state === "connected" || state === "completed") {
+          setConnected(true);
+        }
+      };
+
+      return pc;
+    };
+
     const onPeerJoined = async ({ userId: otherId }) => {
       if (cancelled || offeredRef.current) return;
+      peerUserIdRef.current = otherId;
       const iAmOfferer = (user?._id ?? "") < otherId;
       if (!iAmOfferer) return;
       offeredRef.current = true;
@@ -95,8 +166,7 @@ export default function Call() {
     };
 
     const onIceConfig = (cfg) => { socket.iceServers = cfg.iceServers; };
-
-    const onPeerLeft = () => {
+    const onPeerLeft  = () => {
       if (cancelled) return;
       clearPendingPeerLeft();
       if (remoteRef.current) remoteRef.current.srcObject = null;
@@ -109,13 +179,20 @@ export default function Call() {
       setUnread((n) => n + 1);
     };
 
-    socket.on("ice-config",       onIceConfig);
-    socket.on("peer-joined",      onPeerJoined);
-    socket.on("offer",            onOffer);
-    socket.on("answer",           onAnswer);
-    socket.on("ice-candidate",    onIceCandidate);
-    socket.on("peer-left",        onPeerLeft);
-    socket.on("receive-message",  onReceiveMessage);
+    // #5 — typing indicator
+    const onPeerTyping = ({ isTyping }) => {
+      if (cancelled) return;
+      setPeerTyping(isTyping);
+    };
+
+    socket.on("ice-config",      onIceConfig);
+    socket.on("peer-joined",     onPeerJoined);
+    socket.on("offer",           onOffer);
+    socket.on("answer",          onAnswer);
+    socket.on("ice-candidate",   onIceCandidate);
+    socket.on("peer-left",       onPeerLeft);
+    socket.on("receive-message", onReceiveMessage);
+    socket.on("peer-typing",     onPeerTyping);
 
     const pollTimer = setInterval(async () => {
       try {
@@ -129,19 +206,7 @@ export default function Call() {
 
     const start = async () => {
       const iceServers = socket.iceServers || [{ urls: "stun:stun.l.google.com:19302" }];
-      const pc = new RTCPeerConnection({ iceServers });
-      pcRef.current = pc;
-
-      pc.ontrack = (e) => {
-        if (cancelled) return;
-        if (remoteRef.current) remoteRef.current.srcObject = e.streams[0];
-        setConnected(true);
-      };
-
-      pc.onicecandidate = (e) => {
-        if (cancelled || !e.candidate) return;
-        socket.emit("ice-candidate", { sessionId, candidate: e.candidate });
-      };
+      const pc = createPC(iceServers);
 
       let stream;
       try {
@@ -163,7 +228,6 @@ export default function Call() {
     };
 
     start();
-
     const timer = setInterval(() => setDuration((d) => d + 1), 1000);
 
     return () => {
@@ -179,6 +243,7 @@ export default function Call() {
       socket.off("ice-candidate",   onIceCandidate);
       socket.off("peer-left",       onPeerLeft);
       socket.off("receive-message", onReceiveMessage);
+      socket.off("peer-typing",     onPeerTyping);
       pcRef.current?.close();
       pcRef.current = null;
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -193,7 +258,6 @@ export default function Call() {
     const socket = getSocket();
     if (socket) socket.emit("leave-room");
     api.patch(`/api/sessions/${sessionId}/end`, { endReason: reason }, accessToken).catch(() => {});
-    // skip → auto-search next match, end → show ended screen
     navigate(reason === "skipped" ? "/match?autostart=video" : "/ended");
   };
 
@@ -204,18 +268,33 @@ export default function Call() {
     const socket = getSocket();
     if (!socket) return;
     socket.emit("send-message", { sessionId, text });
-    setMessages((prev) => [...prev, { text, fromUserId: user?._id, timestamp: Date.now(), mine: true }]);
+    socket.emit("typing", { sessionId, isTyping: false });
+    setMessages((prev) => [...prev, { text, mine: true, timestamp: Date.now() }]);
     setMsgInput("");
   };
 
-  const toggleChat = () => {
-    setChatOpen((v) => !v);
-    if (!chatOpen) setUnread(0);
+  const handleTyping = (e) => {
+    setMsgInput(e.target.value);
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit("typing", { sessionId, isTyping: true });
+    clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(() => {
+      socket.emit("typing", { sessionId, isTyping: false });
+    }, 1500);
   };
+
+  const blockPeer = async () => {
+    if (!peerUserIdRef.current) return;
+    await api.post(`/api/users/block/${peerUserIdRef.current}`, null, accessToken).catch(() => {});
+    setBlocked(true);
+    end("completed");
+  };
+
+  const qualityIcon = { good: "🟢", fair: "🟡", poor: "🔴" };
 
   return (
     <div className="call-page">
-      {/* remote video — fullscreen bg */}
       <div className="call-remote">
         <video ref={remoteRef} autoPlay playsInline className="call-video" />
         {!connected && (
@@ -226,7 +305,13 @@ export default function Call() {
         )}
       </div>
 
-      {/* local video PiP */}
+      {/* connection quality badge */}
+      {connected && connQuality && (
+        <div className="conn-quality">
+          {qualityIcon[connQuality]} {connQuality}
+        </div>
+      )}
+
       <div className={`call-local-wrap ${chatOpen ? "chat-open" : ""}`}>
         <video ref={localRef} autoPlay playsInline muted className="call-local" />
       </div>
@@ -235,17 +320,22 @@ export default function Call() {
       <div className={`chat-panel ${chatOpen ? "open" : ""}`}>
         <div className="chat-header">
           <span>💬 Chat</span>
-          <button className="chat-close" onClick={toggleChat}>✕</button>
+          <button className="chat-close" onClick={() => setChatOpen(false)}>✕</button>
         </div>
         <div className="chat-messages">
-          {messages.length === 0 && (
-            <p className="chat-empty">Say hi 👋</p>
-          )}
+          {messages.length === 0 && <p className="chat-empty">Say hi 👋</p>}
           {messages.map((m, i) => (
             <div key={i} className={`chat-msg ${m.mine ? "mine" : "theirs"}`}>
               <span className="chat-bubble">{m.text}</span>
             </div>
           ))}
+          {peerTyping && (
+            <div className="chat-msg theirs">
+              <span className="chat-bubble typing-indicator">
+                <span /><span /><span />
+              </span>
+            </div>
+          )}
           <div ref={chatEndRef} />
         </div>
         <form className="chat-input-row" onSubmit={sendMessage}>
@@ -253,39 +343,32 @@ export default function Call() {
             className="chat-input"
             placeholder="Type a message..."
             value={msgInput}
-            onChange={(e) => setMsgInput(e.target.value)}
+            onChange={handleTyping}
             autoComplete="off"
           />
           <button type="submit" className="chat-send">↑</button>
         </form>
       </div>
 
-      {/* HUD */}
       <div className="call-hud">
         <div className="call-timer">{fmt(duration)}</div>
         <div className="call-controls">
-          <button
-            className={`ctrl-btn ${muted ? "active" : ""}`}
-            onClick={() => {
-              streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; });
-              setMuted((v) => !v);
-            }}
-          >
-            {muted ? "🔇" : "🎙"}
-          </button>
-          <button
-            className={`ctrl-btn ${camOff ? "active" : ""}`}
-            onClick={() => {
-              streamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !t.enabled; });
-              setCamOff((v) => !v);
-            }}
-          >
-            {camOff ? "📷" : "📹"}
-          </button>
-          <button className="ctrl-btn chat-btn" onClick={toggleChat}>
+          <button className={`ctrl-btn ${muted ? "active" : ""}`} onClick={() => {
+            streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; });
+            setMuted((v) => !v);
+          }}>{muted ? "🔇" : "🎙"}</button>
+
+          <button className={`ctrl-btn ${camOff ? "active" : ""}`} onClick={() => {
+            streamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !t.enabled; });
+            setCamOff((v) => !v);
+          }}>{camOff ? "📷" : "📹"}</button>
+
+          <button className="ctrl-btn chat-btn" onClick={() => { setChatOpen((v) => !v); setUnread(0); }}>
             💬
             {unread > 0 && !chatOpen && <span className="unread-badge">{unread}</span>}
           </button>
+
+          <button className="ctrl-btn block-btn" onClick={blockPeer} title="Block user">🚫</button>
           <button className="ctrl-btn skip" onClick={() => end("skipped")}>⏭</button>
           <button className="ctrl-btn end"  onClick={() => end("completed")}>📵</button>
         </div>

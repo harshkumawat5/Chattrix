@@ -8,6 +8,7 @@ import Match from "./pages/Match";
 import Call from "./pages/Call";
 import Chat from "./pages/Chat";
 import Ended from "./pages/Ended";
+import Profile from "./pages/Profile";
 
 const Guard = ({ children }) => {
   const { accessToken } = useAuthStore();
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/call/:sessionId"   element={<Guard><Call /></Guard>} />
         <Route path="/chat/:sessionId"   element={<Guard><Chat /></Guard>} />
         <Route path="/ended"             element={<Guard><Ended /></Guard>} />
+        <Route path="/profile"            element={<Guard><Profile /></Guard>} />
         <Route path="*"                  element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

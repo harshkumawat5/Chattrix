@@ -17,6 +17,9 @@ export default function Chat() {
   const [msgInput,  setMsgInput]  = useState("");
   const [connected, setConnected] = useState(false);
   const [duration,  setDuration]  = useState(0);
+  const [peerTyping, setPeerTyping] = useState(false);
+  const typingTimer = useRef(null);
+  const peerUserIdRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -49,9 +52,14 @@ export default function Chat() {
       navigate("/match?autostart=text");
     };
 
+    const onPeerTyping = ({ isTyping }) => {
+      if (!cancelled) setPeerTyping(isTyping);
+    };
+
     socket.on("peer-joined",     onPeerJoined);
     socket.on("receive-message", onReceiveMessage);
     socket.on("peer-left",       onPeerLeft);
+    socket.on("peer-typing",     onPeerTyping);
 
     const pollTimer = setInterval(async () => {
       try {
@@ -82,6 +90,7 @@ export default function Chat() {
       socket.off("peer-joined",     onPeerJoined);
       socket.off("receive-message", onReceiveMessage);
       socket.off("peer-left",       onPeerLeft);
+      socket.off("peer-typing",     onPeerTyping);
     };
   }, [sessionId, navigate, accessToken]);
 
@@ -95,8 +104,20 @@ export default function Chat() {
     const socket = getSocket();
     if (!socket) return;
     socket.emit("send-message", { sessionId, text });
+    socket.emit("typing", { sessionId, isTyping: false });
     setMessages((prev) => [...prev, { text, mine: true, timestamp: Date.now() }]);
     setMsgInput("");
+  };
+
+  const handleTyping = (e) => {
+    setMsgInput(e.target.value);
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit("typing", { sessionId, isTyping: true });
+    clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(() => {
+      socket.emit("typing", { sessionId, isTyping: false });
+    }, 1500);
   };
 
   const end = (reason = "completed") => {
@@ -146,6 +167,13 @@ export default function Chat() {
             <div className="chat-page-bubble">{m.text}</div>
           </div>
         ))}
+        {peerTyping && (
+          <div className="chat-page-msg theirs">
+            <div className="chat-page-bubble typing-indicator">
+              <span /><span /><span />
+            </div>
+          </div>
+        )}
         <div ref={chatEndRef} />
       </div>
 
@@ -155,7 +183,7 @@ export default function Chat() {
           className="input chat-page-input"
           placeholder={connected ? "Type a message..." : "Waiting to connect..."}
           value={msgInput}
-          onChange={(e) => setMsgInput(e.target.value)}
+          onChange={(e) => handleTyping(e)}
           disabled={!connected}
           autoComplete="off"
         />

@@ -135,7 +135,9 @@ export default function Match() {
       <nav className="match-nav">
         <span className="logo">chattrix</span>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 13, color: "var(--muted)" }}>👤 {user?.displayName}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => navigate("/profile")} style={{ gap: 6 }}>
+            👤 {user?.displayName}
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={logout}>Log out</button>
         </div>
       </nav>

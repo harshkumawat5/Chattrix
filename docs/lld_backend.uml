@@ -394,6 +394,7 @@ note over ClientA, Job
 
   <color:#16A085>USERS (protected)</color>
   GET    /api/users/me                  → own profile
+  PATCH  /api/users/me                  → update profile (displayName, avatarUrl, languages)
   PATCH  /api/users/me/location         → update location
   PATCH  /api/users/me/status           → online / offline
   DELETE /api/users/me                  → delete account
@@ -401,6 +402,8 @@ note over ClientA, Job
   PUT    /api/users/me/preferences      → update preferences
   GET    /api/users/me/sessions         → session history
   GET    /api/users/:userId             → public profile
+  POST   /api/users/block/:userId       → block user
+  DELETE /api/users/block/:userId       → unblock user
 
   <color:#C0392B>MATCHING (protected — matchLimiter + cooldownGuard)</color>
   POST   /api/match-requests            → enter queue
@@ -425,6 +428,7 @@ note over ClientA, Job
   answer          { sessionId, answer }      → relay SDP answer
   ice-candidate   { sessionId, candidate }   → relay ICE
   send-message    { sessionId, text }        → relay text message
+  typing          { sessionId, isTyping }    → typing indicator
 
   <color:#1A5276>SOCKET EVENTS (server → client)</color>
   ice-config      { iceServers }             → STUN config on connect
@@ -433,6 +437,7 @@ note over ClientA, Job
   peer-joined     { userId }                 → other peer ready
   peer-left       { userId, endReason }      → other peer left
   receive-message { text, fromUserId, ts }   → incoming message
+  peer-typing     { isTyping }               → typing indicator
   error           { message }                → rate limit / error
 
   <color:#784212>RATE LIMITS (all from .env)</color>

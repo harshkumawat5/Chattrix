@@ -50,6 +50,11 @@ Chattrix/
 | 🔐 **JWT Auth** | Access + refresh token rotation, auto-refresh on expiry |
 | 🛡 **Rate Limiting** | Per-IP and per-user limits on all sensitive routes |
 | 🔄 **Auto-search** | Skip → instantly searches for next match |
+| 👤 **Profile** | Edit displayName, avatar, languages after register |
+| 🚫 **Block User** | Block strangers from future matches |
+| ••• **Typing Indicator** | See when your chat partner is typing |
+| 🟢 **Connection Quality** | Live RTT-based signal strength indicator |
+| 🔄 **Auto-reconnect** | WebRTC ICE restart on call drop |
 
 ---
 
@@ -357,6 +362,7 @@ Skip → auto-search next    End → /ended screen
 | `/login` | Login | Public | Email only |
 | `/preferences` | Preferences | 🔒 Guard | Distance slider + mode |
 | `/match` | Match | 🔒 Guard | Mode cards + find match |
+| `/profile` | Profile | 🔒 Guard | Edit displayName, avatar, languages |
 | `/call/:sessionId` | Call | 🔒 Guard | WebRTC video session |
 | `/chat/:sessionId` | Chat | 🔒 Guard | Text-only session |
 | `/ended` | Ended | 🔒 Guard | Session ended screen |
@@ -395,6 +401,7 @@ Skip → auto-search next    End → /ended screen
 | `answer` | `{ sessionId, answer }` | Relay WebRTC SDP answer |
 | `ice-candidate` | `{ sessionId, candidate }` | Relay ICE candidate |
 | `send-message` | `{ sessionId, text }` | Send text message |
+| `typing` | `{ sessionId, isTyping }` | Typing indicator |
 
 </details>
 
@@ -409,6 +416,7 @@ Skip → auto-search next    End → /ended screen
 | `peer-joined` | `{ userId }` | Other peer entered room |
 | `peer-left` | `{ userId, endReason }` | Other peer disconnected |
 | `receive-message` | `{ text, fromUserId, timestamp }` | Incoming text message |
+| `peer-typing` | `{ isTyping }` | Peer typing indicator |
 | `error` | `{ message }` | Rate limit or socket error |
 
 </details>
@@ -435,6 +443,7 @@ Skip → auto-search next    End → /ended screen
 | Method | Endpoint | Body | Response |
 |--------|----------|------|----------|
 | `GET` | `/api/users/me` | — | own profile |
+| `PATCH` | `/api/users/me` | `{ displayName?, avatarUrl?, languages? }` | updated user |
 | `PATCH` | `/api/users/me/location` | `{ coordinates? }` | updated user |
 | `PATCH` | `/api/users/me/status` | `{ status }` | updated user |
 | `DELETE` | `/api/users/me` | — | deletes user + preferences |
@@ -442,6 +451,8 @@ Skip → auto-search next    End → /ended screen
 | `PUT` | `/api/users/me/preferences` | `{ preferredMode, preferredMaxDistanceMeters, ... }` | updated preferences |
 | `GET` | `/api/users/me/sessions` | — | session history |
 | `GET` | `/api/users/:userId` | — | public profile |
+| `POST` | `/api/users/block/:userId` | — | block user |
+| `DELETE` | `/api/users/block/:userId` | — | unblock user |
 
 </details>
 

@@ -20,6 +20,11 @@ const registerSignalHandlers = (io, socket) => {
       timestamp: Date.now(),
     });
   });
+
+  // typing indicator
+  socket.on("typing", ({ sessionId, isTyping }) => {
+    socket.to(sessionId).emit("peer-typing", { isTyping });
+  });
 };
 
 module.exports = { registerSignalHandlers };
