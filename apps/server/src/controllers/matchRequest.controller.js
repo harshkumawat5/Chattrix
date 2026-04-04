@@ -1,10 +1,11 @@
+const mongoose = require("mongoose");
 const { User, UserPreference, MatchRequest, ChatSession } = require("../models");
 const { getIpDefaultRadius } = require("../utils/geoip");
 const { getSocket } = require("../socket/registry");
 
 const createMatchRequest = async (req, res, next) => {
   try {
-    const userId = req.user._id;
+    const userId = new mongoose.Types.ObjectId(req.user._id);
 
     const [user, pref] = await Promise.all([
       User.findById(userId),
@@ -39,20 +40,37 @@ const createMatchRequest = async (req, res, next) => {
       locationSnapshot: user.location,
     });
 
-    // Try to find a match: another searching user within range with same mode
-    const candidate = await MatchRequest.findOne({
-      _id: { $ne: myRequest._id },
-      user: { $ne: userId, $nin: user.blockedUsers },
+    // find candidate: geo query without $ne (not compatible with $nearSphere)
+    // then filter out self and blocked users in JS
+    const candidates = await MatchRequest.find({
       status: "searching",
       mode,
       locationSnapshot: {
         $nearSphere: {
           $geometry: user.location,
           $maxDistance: maxDistance,
-          $minDistance: minDistance,
         },
       },
-    });
+    }).limit(20);
+
+    const blockedSet = new Set(user.blockedUsers.map((id) => id.toString()));
+    const myIdStr    = myRequest._id.toString();
+    const userIdStr  = userId.toString();
+
+    let candidate = candidates.find(
+      (r) => r._id.toString() !== myIdStr &&
+             r.user.toString() !== userIdStr &&
+             !blockedSet.has(r.user.toString())
+    ) || null;
+
+    // fallback: if geo found nothing, try a plain query (handles index lag on fast concurrent posts)
+    if (!candidate) {
+      const fallback = await MatchRequest.find({ status: "searching", mode, _id: { $ne: myRequest._id } }).limit(20);
+      console.log('[MATCH] geo candidates:', candidates.length, '| fallback candidates:', fallback.length, '| myId:', myRequest._id, '| userId:', userId);
+      candidate = fallback.find(
+        (r) => r.user.toString() !== userIdStr && !blockedSet.has(r.user.toString())
+      ) || null;
+    }
 
     if (!candidate) {
       await User.findByIdAndUpdate(userId, { status: "searching" });
