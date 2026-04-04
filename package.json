@@ -1,33 +1,15 @@
 {
   "name": "chattrix",
   "version": "1.0.0",
-  "description": "A real-time communication platform that enables users to instantly connect with strangers through video or audio—focused on **proximity-based interactions**.",
-  "main": "src/server.js",
+  "description": "Proximity-based random video/audio chat platform",
+  "private": true,
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "test": "echo \"No tests configured yet\""
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/harshkumawat5/Chattrix.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/harshkumawat5/Chattrix/issues"
-  },
-  "homepage": "https://github.com/harshkumawat5/Chattrix#readme",
-  "dependencies": {
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.0",
-    "express": "^5.2.1",
-    "mongoose": "^9.3.3",
-    "morgan": "^1.10.1"
+    "server": "cd apps/server && npm run dev",
+    "client": "cd apps/client && npm run dev",
+    "dev": "npx concurrently \"npm run server\" \"npm run client\"",
+    "build": "cd apps/client && npm run build"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "concurrently": "^9.1.2"
   }
 }

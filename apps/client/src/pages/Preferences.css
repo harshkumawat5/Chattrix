@@ -1,0 +1,72 @@
+.pref-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+}
+
+.pref-bg {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 50% at 50% 0%, #7c3aed1a 0%, transparent 70%), var(--bg);
+  z-index: 0;
+}
+
+.pref-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.pref-header { display: flex; flex-direction: column; gap: 6px; }
+.pref-header h2 { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+
+.pref-section { display: flex; flex-direction: column; gap: 12px; }
+.pref-label { font-size: 13px; font-weight: 500; color: var(--muted); }
+.pref-value { color: var(--accent3); font-weight: 600; }
+
+.mode-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.mode-tab.active {
+  border-color: var(--accent2);
+  background: #7c3aed18;
+  color: var(--accent3);
+}
+.mode-tab:hover:not(.active) { border-color: var(--border2); color: var(--text); }
+
+.dist-slider {
+  width: 100%;
+  accent-color: var(--accent2);
+  height: 4px;
+  cursor: pointer;
+}
+
+.dist-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+}
+.dist-labels .active { color: var(--accent3); font-weight: 600; }
