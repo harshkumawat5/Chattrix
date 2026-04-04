@@ -45,7 +45,7 @@ export default function Landing() {
           <span className="gradient-text">near you.</span>
         </h1>
         <p className="hero-sub">
-          Instant video & audio chats with strangers nearby.<br />
+          Instant video & random chats with strangers nearby.<br />
           No algorithms. No feeds. Just real conversations.
         </p>
         <div className="hero-actions">
