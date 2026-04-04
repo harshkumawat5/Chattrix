@@ -13,6 +13,7 @@ export default function Match() {
   const [mode, setMode] = useState("video");
   const matchRequestId = useRef(null);
   const startSearchRef = useRef(null);
+  const pollTimerRef   = useRef(null);
   const modeRef = useRef("video");
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -53,32 +54,43 @@ export default function Match() {
     };
 
     const onMatchExpired = () => {
-      setStatus("expired");
-      matchRequestId.current = null;
+      // only show expired if we're still actively searching (not cancelled)
+      if (matchRequestId.current) {
+        setStatus("expired");
+        matchRequestId.current = null;
+      }
     };
 
     socket.on("match-found", onMatchFound);
     socket.on("match-expired", onMatchExpired);
 
-    let pollTimer = null;
     const startPolling = (requestId) => {
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(async () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      pollTimerRef.current = setInterval(async () => {
         try {
           const data = await api.get(`/api/match-requests/${requestId}`, accessToken);
           if (data.data?.status === "matched") {
-            clearInterval(pollTimer);
+            clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
             const sessions = await api.get("/api/users/me/sessions?status=active", accessToken);
             const session = sessions.data?.[0];
             if (session) {
               const route = session.mode === "text" ? `/chat/${session._id}` : `/call/${session._id}`;
               navigate(route);
             }
-          } else if (["expired", "cancelled"].includes(data.data?.status)) {
-            clearInterval(pollTimer);
-            setStatus("expired");
+          } else if (data.data?.status === "expired") {
+            // only show expired — ignore "cancelled" (user cancelled intentionally)
+            clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
+            if (matchRequestId.current) setStatus("expired");
+          } else if (data.data?.status === "cancelled") {
+            clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
           }
-        } catch { clearInterval(pollTimer); }
+        } catch {
+          clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
       }, 2000);
     };
     startSearchRef.current = startPolling;
@@ -86,7 +98,7 @@ export default function Match() {
     return () => {
       socket.off("match-found", onMatchFound);
       socket.off("match-expired", onMatchExpired);
-      if (pollTimer) clearInterval(pollTimer);
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
   }, [accessToken, navigate]);
 
@@ -124,6 +136,11 @@ export default function Match() {
     if (matchRequestId.current) {
       await api.delete(`/api/match-requests/${matchRequestId.current}`, accessToken).catch(() => {});
       matchRequestId.current = null;
+    }
+    // clear poll timer via ref so it stops immediately
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
     }
     setStatus("idle");
   };
