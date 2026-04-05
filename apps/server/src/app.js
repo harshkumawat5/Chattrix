@@ -12,7 +12,19 @@ const { apiLimiter } = require("./middlewares/rateLimiter.middleware");
 
 const app = express();
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || "*" }));
+// CORS — supports comma-separated origins in CLIENT_ORIGIN env
+const allowedOrigins = (process.env.CLIENT_ORIGIN || "*").split(",").map((o) => o.trim());
+const corsOptions = {
+  origin: allowedOrigins.length === 1 && allowedOrigins[0] === "*"
+    ? "*"
+    : (origin, cb) => {
+        if (!origin || allowedOrigins.includes(origin)) cb(null, true);
+        else cb(new Error("CORS not allowed"));
+      },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
 app.use(apiLimiter);

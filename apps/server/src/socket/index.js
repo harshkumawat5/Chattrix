@@ -52,10 +52,15 @@ const isMessageAllowed = (userId) => {
 };
 
 const initSocket = (httpServer) => {
+  const allowedOrigins = (process.env.CLIENT_ORIGIN || "*").split(",").map((o) => o.trim());
+
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_ORIGIN || "*",
+      origin: allowedOrigins.length === 1 && allowedOrigins[0] === "*"
+        ? "*"
+        : allowedOrigins,
       methods: ["GET", "POST"],
+      credentials: true,
     },
   });
 
