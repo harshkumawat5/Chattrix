@@ -129,6 +129,18 @@ cp apps/client/.env.example apps/client/.env
 | `MATCH_REQUEST_TTL_MS` | `120000` | Match request expiry (2 min) |
 | `MATCH_EXPIRY_INTERVAL_MS` | `30000` | Expiry job interval (30 sec) |
 | `STUN_SERVERS` | `stun:stun.l.google.com:19302,...` | Comma-separated STUN URLs |
+| `TURN_SERVERS` | — | Comma-separated TURN URLs (recommended for NAT traversal) |
+| `TURN_USERNAME` | — | TURN auth username |
+| `TURN_CREDENTIAL` | — | TURN auth credential/password |
+| `RECORDING_PROVIDER` | `idrive_e2` | Recording storage provider label |
+| `RECORDING_S3_BUCKET` | — | S3 bucket name for call recordings |
+| `RECORDING_S3_REGION` | — | S3 region |
+| `RECORDING_S3_ACCESS_KEY_ID` | — | S3 access key |
+| `RECORDING_S3_SECRET_ACCESS_KEY` | — | S3 secret key |
+| `RECORDING_S3_ENDPOINT` | — | Optional S3-compatible endpoint (IDrive E2/R2/MinIO) |
+| `RECORDING_S3_FORCE_PATH_STYLE` | `true` | Set `true` for path-style S3 providers |
+| `RECORDING_PUBLIC_BASE_URL` | — | Optional public base URL for stored objects |
+| `RECORDING_UPLOAD_EXPIRES_SECONDS` | `900` | Presigned upload URL expiry |
 
 **Client `.env` keys:**
 
@@ -284,7 +296,7 @@ Skip → auto-search next    End → /ended screen
 | `chatSession` | ObjectId | ✅ | ref: ChatSession |
 | `ownerUser` | ObjectId | ✅ | ref: User |
 | `participantUsers` | [ObjectId] | ✅ | ref: User |
-| `provider` | String | ✅ | enum: `"aws_s3"` \| `"gcp_storage"` \| `"azure_blob"` \| `"cloudflare_r2"` \| `"other"` |
+| `provider` | String | ✅ | enum: `"aws_s3"` \| `"idrive_e2"` \| `"gcp_storage"` \| `"azure_blob"` \| `"cloudflare_r2"` \| `"other"` |
 | `bucketName` | String | ✅ | |
 | `objectKey` | String | ✅ | |
 | `fileUrl` | String | ✅ | |
@@ -482,6 +494,8 @@ Skip → auto-search next    End → /ended screen
 
 | Method | Endpoint | Body | Response |
 |--------|----------|------|----------|
+| `POST` | `/api/recordings/presign` | `{ chatSessionId, mimeType?, extension? }` | presigned upload URL |
+| `POST` | `/api/recordings/finalize` | `{ chatSessionId, provider, bucketName, objectKey, fileUrl, ... }` | `201 recording` |
 | `POST` | `/api/recordings` | `{ chatSessionId, ownerUserId, provider, bucketName, objectKey, fileUrl, ... }` | `201 recording` |
 | `GET` | `/api/recordings/:id` | — | single recording |
 | `GET` | `/api/recordings/user/:userId` | — | recordings by user |

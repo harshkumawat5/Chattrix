@@ -52,7 +52,7 @@ const handleDisconnect = async (io, socket, endReason) => {
     const session = await ChatSession.findOneAndUpdate(
       { _id: sessionId, status: "active" },
       { status: "ended", endedAt: new Date(), endedBy: userId, endReason },
-      { new: true }
+      { returnDocument: "after" }
     );
 
     if (!session) return; // already ended

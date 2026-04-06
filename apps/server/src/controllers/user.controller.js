@@ -40,7 +40,7 @@ const register = async (req, res, next) => {
     await UserPreference.findOneAndUpdate(
       { user: user._id },
       { $setOnInsert: { user: user._id } },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: "after" }
     );
 
     const accessToken = signAccessToken(user);
@@ -144,7 +144,7 @@ const updateLocation = async (req, res, next) => {
     const user = await User.findByIdAndUpdate(
       req.user._id,
       { location, locationSource, locationUpdatedAt: new Date() },
-      { new: true }
+      { returnDocument: "after" }
     );
 
     return res.status(200).json({ data: user });
@@ -159,7 +159,7 @@ const updateStatus = async (req, res, next) => {
     const allowed = ["offline", "online", "searching", "in_call"];
     if (!allowed.includes(status)) return res.status(400).json({ message: "Invalid status" });
 
-    const user = await User.findByIdAndUpdate(req.user._id, { status }, { new: true });
+    const user = await User.findByIdAndUpdate(req.user._id, { status }, { returnDocument: "after" });
     return res.status(200).json({ data: user });
   } catch (error) {
     return next(error);
@@ -184,7 +184,11 @@ const updateProfile = async (req, res, next) => {
     if (avatarUrl !== undefined) updates.avatarUrl = avatarUrl;
     if (languages !== undefined) updates.languages = languages;
 
-    const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true, runValidators: true });
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      updates,
+      { returnDocument: "after", runValidators: true }
+    );
     return res.status(200).json({ data: user });
   } catch (error) {
     return next(error);

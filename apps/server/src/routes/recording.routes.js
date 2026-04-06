@@ -1,5 +1,7 @@
 const express = require("express");
 const {
+  createRecordingPresign,
+  finalizeRecording,
   createRecording,
   getRecordingById,
   listRecordingsByUser,
@@ -10,6 +12,8 @@ const { auth } = require("../middlewares/auth.middleware");
 
 const router = express.Router();
 
+router.post("/presign",                auth, createRecordingPresign);
+router.post("/finalize",               auth, finalizeRecording);
 router.post("/",                       auth, createRecording);
 router.get("/user/:userId",            auth, listRecordingsByUser);
 router.get("/session/:chatSessionId",  auth, listRecordingsBySession);

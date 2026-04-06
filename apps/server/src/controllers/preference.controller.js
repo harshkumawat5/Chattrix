@@ -18,7 +18,7 @@ const updatePreferences = async (req, res, next) => {
     const pref = await UserPreference.findOneAndUpdate(
       { user: req.user._id },
       { preferredMinDistanceMeters, preferredMaxDistanceMeters, preferredMode, languageCodes, allowLocalMatching },
-      { new: true, runValidators: true, omitUndefined: true }
+      { returnDocument: "after", runValidators: true, omitUndefined: true }
     );
     if (!pref) return res.status(404).json({ message: "Preferences not found" });
 

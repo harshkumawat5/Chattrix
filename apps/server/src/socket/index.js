@@ -4,12 +4,36 @@ const { register, unregister } = require("./registry");
 const { registerSessionHandlers } = require("./handlers/session.handler");
 const { registerSignalHandlers } = require("./handlers/signal.handler");
 
-// STUN only — TURN is a future enhancement
-// Parsed from comma-separated STUN_SERVERS env var
-const buildIceServers = () =>
-  (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302")
+// Parsed from comma-separated STUN/TURN env vars.
+// TURN is required for many NAT combinations where STUN-only fails.
+const buildIceServers = () => {
+  const stunServers = (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302")
     .split(",")
-    .map((url) => ({ urls: url.trim() }));
+    .map((url) => url.trim())
+    .filter(Boolean)
+    .map((url) => ({ urls: url }));
+
+  const turnUrls = (process.env.TURN_SERVERS || "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
+
+  if (!turnUrls.length) return stunServers;
+
+  const username = process.env.TURN_USERNAME || "";
+  const credential = process.env.TURN_CREDENTIAL || "";
+
+  if (!username || !credential) return stunServers;
+
+  return [
+    ...stunServers,
+    {
+      urls: turnUrls,
+      username,
+      credential,
+    },
+  ];
+};
 
 // Connection attempts per IP
 const connectionAttempts = new Map();
@@ -33,6 +57,7 @@ const isConnectionAllowed = (ip) => {
 
 // Message rate per user
 const messageCounts = new Map();
+const signalingEvents = new Set(["offer", "answer", "ice-candidate"]);
 
 const isMessageAllowed = (userId) => {
   const now = Date.now();
@@ -98,6 +123,9 @@ const initSocket = (httpServer) => {
 
     // ── Message rate limit ───────────────────────────────────
     socket.use(([event], next) => {
+      // WebRTC signaling can burst quickly (especially ICE); do not throttle these.
+      if (signalingEvents.has(event)) return next();
+
       if (!isMessageAllowed(userId)) {
         socket.emit("error", { message: "RATE_LIMIT: too many messages, slow down." });
         return;

@@ -22,10 +22,18 @@ const endSession = async (req, res, next) => {
       return res.status(400).json({ message: `endReason must be one of: ${allowed.join(", ")}` });
     }
 
+    const existingSession = await ChatSession.findById(req.params.id);
+    if (!existingSession) return res.status(404).json({ message: "Session not found" });
+
+    // Idempotent end API: if already ended, return current state.
+    if (existingSession.status !== "active") {
+      return res.status(200).json({ data: existingSession });
+    }
+
     const session = await ChatSession.findOneAndUpdate(
       { _id: req.params.id, status: "active" },
       { status: "ended", endedAt: new Date(), endedBy, endReason },
-      { new: true }
+      { returnDocument: "after" }
     );
     if (!session) return res.status(404).json({ message: "Active session not found" });
 

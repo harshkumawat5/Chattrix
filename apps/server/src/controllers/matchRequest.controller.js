@@ -125,7 +125,7 @@ const cancelMatchRequest = async (req, res, next) => {
     const request = await MatchRequest.findOneAndUpdate(
       { _id: req.params.id, status: "searching" },
       { status: "cancelled" },
-      { new: true }
+      { returnDocument: "after" }
     );
     if (!request) return res.status(404).json({ message: "Active match request not found" });
 

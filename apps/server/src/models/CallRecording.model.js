@@ -25,7 +25,7 @@ const callRecordingSchema = new Schema(
     ],
     provider: {
       type: String,
-      enum: ["aws_s3", "gcp_storage", "azure_blob", "cloudflare_r2", "other"],
+      enum: ["aws_s3", "idrive_e2", "gcp_storage", "azure_blob", "cloudflare_r2", "other"],
       required: true,
     },
     bucketName: {
@@ -102,4 +102,3 @@ callRecordingSchema.index({ chatSession: 1, createdAt: -1 });
 callRecordingSchema.index({ provider: 1, bucketName: 1, objectKey: 1 }, { unique: true });
 
 module.exports = mongoose.model("CallRecording", callRecordingSchema);
-
