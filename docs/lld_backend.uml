@@ -1,0 +1,452 @@
+@startuml lld_backend
+
+' ───────────── COLORS ─────────────
+!define GPS_COLOR #27AE60
+!define IP_COLOR #E67E22
+!define MATCH_COLOR #2980B9
+!define SESSION_COLOR #8E44AD
+!define RECORD_COLOR #C0392B
+!define USER_COLOR #16A085
+!define SOCKET_COLOR #1A5276
+!define JOB_COLOR #6C3483
+!define AUTH_COLOR #C0392B
+!define RATE_COLOR #784212
+
+' ───────────── SKINPARAM ─────────────
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontColor #2C3E50
+skinparam defaultFontSize 13
+skinparam defaultFontName Arial
+
+skinparam sequence {
+  BackgroundColor #F8F9FA
+  BorderColor #BDC3C7
+  ActorBackgroundColor #16A085
+  ActorBorderColor #2C3E50
+  ActorFontColor #FFFFFF
+  ParticipantBackgroundColor #ECF0F1
+  ParticipantBorderColor #BDC3C7
+  ParticipantFontColor #2C3E50
+  ArrowColor #34495E
+  ArrowFontColor #2C3E50
+  LifeLineBorderColor #BDC3C7
+  LifeLineBackgroundColor #ECF0F1
+  NoteBackgroundColor #D6EAF8
+  NoteBorderColor #2980B9
+  NoteFontColor #2C3E50
+  DividerBackgroundColor #ECF0F1
+  DividerBorderColor #BDC3C7
+  DividerFontColor #2C3E50
+  GroupBackgroundColor #F2F3F4
+  GroupBorderColor #BDC3C7
+  GroupHeaderFontColor #34495E
+}
+
+skinparam note {
+  BackgroundColor #D6EAF8
+  BorderColor #2980B9
+  FontColor #2C3E50
+}
+
+' ───────────── PARTICIPANTS ─────────────
+actor       "📱 Client A"         as ClientA  #16A085
+actor       "📱 Client B"         as ClientB  #16A085
+participant "🌐 Express API"      as API      #2980B9
+participant "📍 GeoIP Util"       as GeoIP    #E67E22
+database    "🍃 MongoDB"          as DB       #8E44AD
+participant "🔀 Match Engine"     as Match    #C0392B
+participant "🔌 Socket.io"        as Socket   #1A5276
+participant "⏱ Expiry Job"        as Job      #6C3483
+
+' ═══════════════════════════════════════════════════════
+== 🔐 STEP 1 — Register & JWT Auth ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> API : POST /api/users/auth/register\n{ displayName, email, location? }
+note right of API
+  <color:#784212>authLimiter:</color> 10 req / 15 min per IP
+  <color:#784212>apiLimiter:</color> 400 req / 15 min per IP
+end note
+
+alt GPS coordinates provided
+  API -> API : locationSource = <color:#27AE60>"gps"</color>
+  note right
+    ✅ Precise matching
+    maxDistance = preferredMaxDistanceMeters
+    default 10km
+  end note
+else No coordinates — fallback to IP
+  API -> GeoIP : resolveCoordinatesFromIp(clientIP)
+  note right of GeoIP
+    timeout = GEOIP_API_TIMEOUT_MS (from .env)
+    private IPs → fallback [0,0] for local dev
+  end note
+  GeoIP -> GeoIP : call ip-api.com
+  GeoIP --> API : { coordinates: [lon, lat], city }
+  API -> API : locationSource = <color:#E67E22>"ip"</color>
+  note right
+    ⚠️ City-level accuracy
+    maxDistance = GEOIP_DEFAULT_RADIUS_METERS
+  end note
+end
+
+API -> DB : User.create({ location, locationSource })
+API -> DB : UserPreference.findOneAndUpdate (upsert defaults)
+note right of DB
+  <color:#16A085>Preferences auto-created:</color>
+  minDistance = 0m
+  maxDistance = 10,000m
+  mode = "both"
+end note
+DB --> API : user doc
+
+API -> API : signAccessToken(user)\nsignRefreshToken(user)\nhashToken(refreshToken) → DB
+note right
+  <color:#C0392B>JWT_EXPIRES_IN</color> = 15m (from .env)
+  <color:#C0392B>JWT_REFRESH_EXPIRES_IN</color> = 7d (from .env)
+  refreshToken stored hashed — never raw
+end note
+
+API --> ClientA : <color:#27AE60>201</color> { data: user, accessToken, refreshToken }
+
+' ═══════════════════════════════════════════════════════
+== 🔄 STEP 2 — Token Lifecycle ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> API : POST /api/users/auth/login { email }
+API -> DB : User.findOne({ email })
+DB --> API : user
+API --> ClientA : <color:#27AE60>200</color> { accessToken, refreshToken }
+
+ClientA -> API : POST /api/users/auth/refresh { refreshToken }
+API -> DB : User.findById + select("+refreshToken")
+API -> API : compareToken(raw, hashed) ✅
+API -> DB : save new hashed refreshToken
+API --> ClientA : <color:#27AE60>200</color> { accessToken, refreshToken }
+note right
+  Token rotation on every refresh
+  Old refresh token invalidated immediately
+  Client auto-retries 401s via api.js interceptor
+end note
+
+ClientA -> API : POST /api/users/auth/logout [auth]
+API -> DB : refreshToken = null\nstatus = "offline"
+API --> ClientA : <color:#27AE60>200</color> { message: "Logged out" }
+
+' ═══════════════════════════════════════════════════════
+== 🔌 STEP 3 — Socket Connection & Auth ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> Socket : io.connect({ auth: { token: "Bearer <accessToken>" } })
+ClientB -> Socket : io.connect({ auth: { token: "Bearer <accessToken>" } })
+
+note right of Socket
+  <color:#784212>Connection limiter:</color>
+  RATE_LIMIT_SOCKET_CONN_MAX / RATE_LIMIT_SOCKET_CONN_WINDOW_MS per IP
+  checked before auth — no DB call
+end note
+
+Socket -> Socket : connectionAttempts.get(ip)\ncheck count < RATE_LIMIT_SOCKET_CONN_MAX
+
+alt Too many connection attempts
+  Socket --> ClientA : <color:#C0392B>RATE_LIMIT</color> — rejected
+else Within limit
+  Socket -> Socket : jwt.verify(token, JWT_SECRET)\nsocket.data.userId = payload.sub
+  note right
+    Synchronous JWT verify — no DB call
+    userId trusted from token, never from client payload
+  end note
+
+  alt Invalid or expired token
+    Socket --> ClientA : <color:#C0392B>AUTH_INVALID</color> — rejected
+  else Valid token
+    Socket -> Socket : registry.set(userId, socket)\ncache match-found + peer-left events
+    Socket --> ClientA : <color:#27AE60>ice-config</color>\n{ iceServers: parsed from STUN_SERVERS env }
+    note right
+      STUN_SERVERS = comma-separated in .env
+      TURN = future enhancement
+    end note
+  end
+end
+
+' ═══════════════════════════════════════════════════════
+== 🔵 STEP 4 — Set Preferences (Optional) ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> API : PUT /api/users/me/preferences\n{ preferredMaxDistanceMeters, preferredMode }
+note right of API
+  Requires: <color:#C0392B>Authorization: Bearer <token></color>
+  userId from req.user._id — cannot be spoofed
+end note
+API -> DB : UserPreference.findOneAndUpdate({ user: req.user._id })
+DB --> API : updated pref
+API --> ClientA : <color:#27AE60>200</color> { data: preferences }
+
+note over ClientA, DB
+  <color:#E67E22>GPS users</color> → preference range applied in matching
+  <color:#E67E22>IP users</color>  → GEOIP_DEFAULT_RADIUS_METERS always applied (preference ignored)
+end note
+
+' ═══════════════════════════════════════════════════════
+== 🔴 STEP 5 — Enter Matchmaking Queue ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> API : POST /api/match-requests { mode: "video"|"text" }
+ClientB -> API : POST /api/match-requests { mode: "video"|"text" }
+
+note right of API
+  <color:#784212>matchLimiter:</color> 15 req / 1 min per userId
+  <color:#784212>matchCooldownGuard:</color> 2s cooldown per userId
+  userId from req.user._id (JWT) — not from body
+  mode: "video" → /call/:id | "text" → /chat/:id
+end note
+
+API -> DB : User.findById + UserPreference.findOne
+API -> DB : MatchRequest.findOne({ user, status: "searching" })
+
+alt Duplicate request exists
+  DB --> API : existing request
+  API --> ClientA : <color:#C0392B>409</color> { data: existingRequest }
+  note right
+    Client auto-cancels stale request
+    and retries immediately
+  end note
+else No duplicate
+  API -> Match : determine maxDistance
+  alt locationSource = "gps"
+    Match -> Match : maxDistance = <color:#27AE60>preferredMaxDistanceMeters</color>
+  else locationSource = "ip"
+    Match -> Match : maxDistance = <color:#E67E22>GEOIP_DEFAULT_RADIUS_METERS</color>
+  end
+
+  API -> DB : MatchRequest.create\n{ status: "searching",\n  expiresAt: now + MATCH_REQUEST_TTL_MS }
+  note right of DB
+    TTL from .env: MATCH_REQUEST_TTL_MS
+    Expiry job monitors this field
+  end note
+
+  API -> Match : $nearSphere query\n(same mode, not blocked, within maxDistance)
+
+  alt ✅ Candidate FOUND (Client B was waiting)
+    Match -> DB : ChatSession.create({ participants, mode })
+    Match -> DB : MatchRequest ×2 → <color:#27AE60>"matched"</color>
+    Match -> DB : User ×2 → <color:#8E44AD>"in_call"</color>
+    DB --> API : session
+    API -> Socket : registry.getSocket(candidateUserId)
+    Socket --> ClientB : <color:#27AE60>match-found</color>\n{ sessionId, mode, matchedWith }
+    note right
+      🎉 Waiting user notified via socket
+      mode=video → navigate /call/:id
+      mode=text  → navigate /chat/:id
+    end note
+    API --> ClientA : <color:#27AE60>201</color> { session, matchRequest }
+
+  else ❌ No Candidate YET
+    Match -> DB : User → status: <color:#E67E22>"searching"</color>
+    API --> ClientA : <color:#E67E22>202</color> Searching...\n{ data: matchRequest }
+    note right
+      Client waits for "match-found" socket event
+      OR polls GET /api/match-requests/:id every 2s
+    end note
+  end
+end
+
+' ═══════════════════════════════════════════════════════
+== ⏱ BACKGROUND — Match Expiry Job ==
+' ═══════════════════════════════════════════════════════
+
+note over Job
+  Runs every MATCH_EXPIRY_INTERVAL_MS (from .env)
+  Started after DB connects, stopped cleanly on SIGINT/SIGTERM
+end note
+
+Job -> DB : MatchRequest.find\n{ status:"searching", expiresAt < now }
+
+alt Expired requests found
+  Job -> DB : MatchRequest.updateMany → <color:#C0392B>"expired"</color>
+  Job -> DB : User.updateMany → status: <color:#16A085>"online"</color>
+  Job -> Socket : registry.getSocket(userId) per expired user
+  Socket --> ClientA : <color:#C0392B>match-expired</color>\n{ message: "No match found. Try again." }
+else Nothing expired
+  Job -> Job : no-op
+end
+
+' ═══════════════════════════════════════════════════════
+== 🟣 STEP 6 — Video Session (WebRTC) ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> Socket : emit("join-room", { sessionId })
+ClientB -> Socket : emit("join-room", { sessionId })
+
+note right of Socket
+  <color:#784212>Message limiter:</color>
+  RATE_LIMIT_SOCKET_MSG_MAX / RATE_LIMIT_SOCKET_MSG_WINDOW_MS per userId
+  Applied via socket.use() — wraps ALL incoming events
+  userId from socket.data (JWT auth) — cannot be spoofed
+end note
+
+Socket -> DB : ChatSession.findOne({ _id: sessionId, status:"active" })
+DB --> Socket : session + participants
+
+Socket --> ClientA : <color:#27AE60>peer-joined</color> { userId: B }
+Socket --> ClientB : <color:#27AE60>peer-joined</color> { userId: A }
+
+note over ClientA, ClientB
+  Deterministic roles: smaller _id = offerer
+  Prevents both peers creating offers simultaneously
+end note
+
+ClientA -> Socket : emit("offer", { sessionId, offer: SDP })
+Socket --> ClientB : <color:#2980B9>offer</color> { offer, fromUserId: A }
+
+ClientB -> Socket : emit("answer", { sessionId, answer: SDP })
+Socket --> ClientA : <color:#2980B9>answer</color> { answer, fromUserId: B }
+
+ClientA -> Socket : emit("ice-candidate", { sessionId, candidate })
+Socket --> ClientB : <color:#E67E22>ice-candidate</color> { candidate, fromUserId: A }
+
+ClientB -> Socket : emit("ice-candidate", { sessionId, candidate })
+Socket --> ClientA : <color:#E67E22>ice-candidate</color> { candidate, fromUserId: B }
+
+note over ClientA, ClientB
+  🎥 P2P media stream established directly between browsers
+  Server only relayed SDP + ICE — no media passes through server
+  Text chat: emit("send-message") → relay → emit("receive-message")
+end note
+
+' ═══════════════════════════════════════════════════════
+== 💬 STEP 6b — Text-Only Session ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> Socket : emit("join-room", { sessionId })
+ClientB -> Socket : emit("join-room", { sessionId })
+Socket --> ClientA : <color:#27AE60>peer-joined</color> { userId: B }
+Socket --> ClientB : <color:#27AE60>peer-joined</color> { userId: A }
+
+note over ClientA, ClientB
+  No WebRTC — no getUserMedia, no RTCPeerConnection
+  Pure socket relay for messages only
+end note
+
+ClientA -> Socket : emit("send-message", { sessionId, text })
+Socket --> ClientB : <color:#2980B9>receive-message</color> { text, fromUserId: A, timestamp }
+
+ClientB -> Socket : emit("send-message", { sessionId, text })
+Socket --> ClientA : <color:#2980B9>receive-message</color> { text, fromUserId: B, timestamp }
+
+' ═══════════════════════════════════════════════════════
+== 🟠 STEP 7 — End Session ==
+' ═══════════════════════════════════════════════════════
+
+alt Skip ⏭ — auto-search next match
+  ClientA -> Socket : emit("leave-room")
+  Socket -> DB : ChatSession → status: <color:#C0392B>"ended"</color>\nendReason: <color:#C0392B>"skipped"</color>
+  Socket -> DB : User.updateMany → status: <color:#16A085>"online"</color>
+  Socket --> ClientB : <color:#C0392B>peer-left</color>\n{ userId: A, endReason: "skipped" }
+  note right
+    ClientA → /match?autostart=video|text
+    ClientB → /match?autostart=video|text
+    Both auto-search next match immediately
+  end note
+
+else End 📵 — go to ended screen
+  ClientA -> API : PATCH /api/sessions/:id/end\n{ endReason: "completed" }
+  API -> DB : ChatSession → status: <color:#C0392B>"ended"</color>
+  API -> DB : User.updateMany → status: <color:#16A085>"online"</color>
+  API --> ClientA : <color:#27AE60>200</color> { data: session }
+  note right
+    ClientA → /ended screen
+    ClientB receives peer-left → /match?autostart
+  end note
+
+else Abrupt disconnect (crash / close tab)
+  Socket -> Socket : "disconnecting" event
+  Socket -> DB : ChatSession → status: <color:#C0392B>"ended"</color>\nendReason: <color:#C0392B>"disconnect"</color>
+  Socket -> DB : User.updateMany → status: <color:#16A085>"online"</color>
+  Socket --> ClientB : <color:#C0392B>peer-left</color>\n{ userId: A, endReason: "disconnect" }
+  note right
+    Auto-end — no dangling "active" sessions
+    ClientB → /match?autostart
+  end note
+end
+
+' ═══════════════════════════════════════════════════════
+== 🔴 STEP 8 — Save Recording (Optional) ==
+' ═══════════════════════════════════════════════════════
+
+ClientA -> API : POST /api/recordings\n{ chatSessionId, provider: "aws_s3",\n  bucketName, objectKey, fileUrl }
+API -> DB : ChatSession.findById (validate exists)
+API -> DB : CallRecording.create(...)
+API -> DB : ChatSession → $addToSet recordings
+DB --> API : recording doc
+API --> ClientA : <color:#27AE60>201</color> { data: recording }
+
+' ═══════════════════════════════════════════════════════
+== ⚡ QUICK REFERENCE ==
+' ═══════════════════════════════════════════════════════
+
+note over ClientA, Job
+  <color:#C0392B>AUTH (public — authLimiter)</color>
+  POST   /api/users/auth/register       → register + JWT pair
+  POST   /api/users/auth/login          → login + JWT pair
+  POST   /api/users/auth/refresh        → rotate tokens
+  POST   /api/users/auth/logout         → revoke [protected]
+
+  <color:#16A085>USERS (protected)</color>
+  GET    /api/users/me                  → own profile
+  PATCH  /api/users/me                  → update profile (displayName, avatarUrl, languages)
+  PATCH  /api/users/me/location         → update location
+  PATCH  /api/users/me/status           → online / offline
+  DELETE /api/users/me                  → delete account
+  GET    /api/users/me/preferences      → get preferences
+  PUT    /api/users/me/preferences      → update preferences
+  GET    /api/users/me/sessions         → session history
+  GET    /api/users/:userId             → public profile
+  POST   /api/users/block/:userId       → block user
+  DELETE /api/users/block/:userId       → unblock user
+
+  <color:#C0392B>MATCHING (protected — matchLimiter + cooldownGuard)</color>
+  POST   /api/match-requests            → enter queue
+  GET    /api/match-requests/:id        → poll status
+  DELETE /api/match-requests/:id        → cancel search
+
+  <color:#8E44AD>SESSIONS (protected)</color>
+  GET    /api/sessions/:id              → session details
+  PATCH  /api/sessions/:id/end          → end session
+
+  <color:#E67E22>RECORDINGS (protected)</color>
+  POST   /api/recordings                → save metadata
+  GET    /api/recordings/:id            → single recording
+  GET    /api/recordings/user/:userId   → by user
+  GET    /api/recordings/session/:id    → by session
+  DELETE /api/recordings/:id            → soft delete
+
+  <color:#1A5276>SOCKET EVENTS (client → server)</color>
+  join-room       { sessionId }              → join room
+  leave-room                                 → skip session
+  offer           { sessionId, offer }       → relay SDP offer
+  answer          { sessionId, answer }      → relay SDP answer
+  ice-candidate   { sessionId, candidate }   → relay ICE
+  send-message    { sessionId, text }        → relay text message
+  typing          { sessionId, isTyping }    → typing indicator
+
+  <color:#1A5276>SOCKET EVENTS (server → client)</color>
+  ice-config      { iceServers }             → STUN config on connect
+  match-found     { sessionId, mode }        → match ready
+  match-expired   { message }                → no match, retry
+  peer-joined     { userId }                 → other peer ready
+  peer-left       { userId, endReason }      → other peer left
+  receive-message { text, fromUserId, ts }   → incoming message
+  peer-typing     { isTyping }               → typing indicator
+  error           { message }                → rate limit / error
+
+  <color:#784212>RATE LIMITS (all from .env)</color>
+  apiLimiter           400 req / 15 min  per IP
+  authLimiter           10 req / 15 min  per IP
+  matchLimiter          15 req / 1 min   per userId
+  matchCooldownGuard     2 sec cooldown  per userId
+  socketConnLimiter      5 conn / 1 min  per IP
+  socketMsgLimiter      10 msg / 1 sec   per userId
+end note
+
+@enduml

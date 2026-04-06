@@ -1,0 +1,389 @@
+@startuml lld_frontend
+
+' ───────────── COLORS ─────────────
+!define GPS_COLOR #27AE60
+!define IP_COLOR #E67E22
+!define MATCH_COLOR #2980B9
+!define SESSION_COLOR #8E44AD
+!define RECORD_COLOR #C0392B
+!define USER_COLOR #16A085
+!define SOCKET_COLOR #1A5276
+!define AUTH_COLOR #C0392B
+
+' ───────────── SKINPARAM ─────────────
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontColor #2C3E50
+skinparam defaultFontSize 13
+skinparam defaultFontName Arial
+
+skinparam sequence {
+  BackgroundColor #F8F9FA
+  BorderColor #BDC3C7
+  ActorBackgroundColor #16A085
+  ActorBorderColor #2C3E50
+  ActorFontColor #FFFFFF
+  ParticipantBackgroundColor #ECF0F1
+  ParticipantBorderColor #BDC3C7
+  ParticipantFontColor #2C3E50
+  ArrowColor #34495E
+  ArrowFontColor #2C3E50
+  LifeLineBorderColor #BDC3C7
+  LifeLineBackgroundColor #ECF0F1
+  NoteBackgroundColor #D6EAF8
+  NoteBorderColor #2980B9
+  NoteFontColor #2C3E50
+  DividerBackgroundColor #ECF0F1
+  DividerBorderColor #BDC3C7
+  DividerFontColor #2C3E50
+  GroupBackgroundColor #F2F3F4
+  GroupBorderColor #BDC3C7
+  GroupHeaderFontColor #34495E
+}
+
+skinparam note {
+  BackgroundColor #D6EAF8
+  BorderColor #2980B9
+  FontColor #2C3E50
+}
+
+' ───────────── PARTICIPANTS ─────────────
+actor       "👤 User"            as User    #16A085
+participant "🖥 Browser / React"  as UI      #2980B9
+participant "🗃 Zustand Store"    as Store   #8E44AD
+participant "🔧 api.js"           as API     #E67E22
+participant "🔌 socket.js"        as Socket  #1A5276
+participant "🌐 Backend"          as Backend #C0392B
+
+' ═══════════════════════════════════════════════════════
+== 🟢 STEP 1 — Landing Page ==
+' ═══════════════════════════════════════════════════════
+
+User -> UI : visits http://localhost:5173
+
+UI -> Store : read accessToken
+
+alt User not logged in
+  UI --> User : show hero\n"Create account →"  "Log in"
+  note right of UI
+    Guest sees: Create account + Log in buttons
+    No auth state in localStorage
+  end note
+else User logged in
+  UI --> User : show hero\n"Start chatting →"  "Log out"
+  note right of UI
+    Token persisted in localStorage via zustand/persist
+    main.jsx auto-calls connectSocket(accessToken) on load
+  end note
+end
+
+' ═══════════════════════════════════════════════════════
+== 🔐 STEP 2 — Register ==
+' ═══════════════════════════════════════════════════════
+
+User -> UI : fills displayName, email (optional)\ntoggle GPS or use IP
+
+alt GPS toggle ON
+  UI -> UI : navigator.geolocation.getCurrentPosition()
+  UI --> User : browser asks location permission
+  note right
+    GPS ON → sends coordinates to backend
+    locationSource = "gps"
+    Better match accuracy
+  end note
+else GPS toggle OFF
+  note right of UI
+    No coordinates sent
+    Backend resolves from client IP
+    locationSource = "ip"
+    City-level accuracy, no permission needed
+  end note
+end
+
+UI -> API : POST /api/users/auth/register\n{ displayName, email, location? }
+API -> Backend : fetch request + Bearer token (none yet)
+Backend --> API : 201 { user, accessToken, refreshToken }
+API --> UI : response data
+
+UI -> Store : setAuth(user, accessToken, refreshToken)
+note right of Store
+  Persisted to localStorage
+  Survives page refresh
+end note
+
+UI -> Socket : connectSocket(accessToken)
+note right of Socket
+  Creates singleton io() connection
+  auth: { token: "Bearer <accessToken>" }
+  Caches match-found + peer-left events globally
+end note
+
+Socket -> Backend : WebSocket handshake
+Backend --> Socket : ice-config { iceServers }
+UI --> User : navigate → /preferences
+
+' ═══════════════════════════════════════════════════════
+== 🔑 STEP 3 — Login (Returning User) ==
+' ═══════════════════════════════════════════════════════
+
+User -> UI : enters email
+UI -> API : POST /api/users/auth/login { email }
+API -> Backend : fetch
+Backend --> API : 200 { user, accessToken, refreshToken }
+UI -> Store : setAuth(user, accessToken, refreshToken)
+UI -> Socket : connectSocket(accessToken)
+UI --> User : navigate → /match
+
+note over User, Backend
+  On page refresh: main.jsx reads token from Store → connectSocket() auto-reconnects
+  On 401: api.js intercepts → POST /auth/refresh → retry original request
+  On refresh fail: clearAuth() → redirect /login
+end note
+
+' ═══════════════════════════════════════════════════════
+== ⚙️ STEP 4 — Preferences ==
+' ═══════════════════════════════════════════════════════
+
+User -> UI : selects distance slider + mode (video/both)
+UI -> API : PUT /api/users/me/preferences\n{ preferredMaxDistanceMeters, preferredMode }
+note right of API
+  Bearer token from Store.accessToken
+  userId from JWT — never from form
+end note
+API -> Backend : fetch
+Backend --> API : 200 { data: preferences }
+UI --> User : navigate → /match
+
+' ═══════════════════════════════════════════════════════
+== 🎯 STEP 5 — Match Screen ==
+' ═══════════════════════════════════════════════════════
+
+UI --> User : show mode cards\n📹 Video Chat  |  💬 Text Chat
+User -> UI : selects mode + clicks "Find a match →"
+
+UI -> API : POST /api/match-requests { mode: "video"|"text" }
+API -> Backend : fetch
+
+alt 201 — instant match
+  Backend --> API : { session, matchRequest }
+  API --> UI : response
+  alt mode = "video"
+    UI --> User : navigate → /call/:sessionId
+  else mode = "text"
+    UI --> User : navigate → /chat/:sessionId
+  end
+
+else 202 — searching
+  Backend --> API : { matchRequest }
+  API --> UI : response
+  UI --> User : show pulse animation "Looking nearby..."
+  note right of UI
+    Two parallel fallbacks:
+    1. socket "match-found" event (instant)
+    2. poll GET /api/match-requests/:id every 2s
+  end note
+
+  Socket -> UI : match-found { sessionId, mode }
+  note right of Socket
+    Cached at socket.js level — never missed
+    even with React StrictMode double-invoke
+  end note
+  alt mode = "video"
+    UI --> User : navigate → /call/:sessionId
+  else mode = "text"
+    UI --> User : navigate → /chat/:sessionId
+  end
+
+else 409 — stale request
+  Backend --> API : { data: existingRequest }
+  API --> UI : err.status=409, err.data._id
+  UI -> API : DELETE /api/match-requests/:id (cancel stale)
+  UI -> API : POST /api/match-requests { mode } (retry)
+  UI --> User : searching...
+end
+
+' ═══════════════════════════════════════════════════════
+== 📹 STEP 6a — Video Call (/call/:sessionId) ==
+' ═══════════════════════════════════════════════════════
+
+UI -> UI : check pendingPeerLeft → /match?autostart if set
+UI -> UI : getUserMedia({ video, audio })
+UI --> User : local video preview (mirrored PiP)
+UI -> UI : new RTCPeerConnection({ iceServers })
+UI -> Socket : emit("join-room", { sessionId })
+
+Socket -> Backend : join-room
+Backend --> Socket : peer-joined { userId: otherId } to BOTH peers
+
+note over UI, Backend
+  Deterministic offerer role:
+  myUserId < otherId → I create the offer
+  myUserId > otherId → I wait for offer
+  Prevents both peers creating offers simultaneously
+end note
+
+alt I am offerer
+  UI -> Socket : emit("offer", { sessionId, offer })
+  Socket -> Backend : relay
+  Backend --> Socket : relay to other peer
+  Socket -> UI : answer { answer }
+  UI -> UI : setRemoteDescription(answer)
+else I am answerer
+  Socket -> UI : offer { offer }
+  UI -> UI : setRemoteDescription(offer)\ncreateAnswer()
+  UI -> Socket : emit("answer", { sessionId, answer })
+end
+
+UI -> Socket : emit("ice-candidate", ...) [multiple]
+Socket -> Backend : relay to other peer
+
+UI --> User : 🎥 remote video appears\n"Connecting..." → connected
+
+note right of UI
+  Text chat panel (💬 button):
+  send-message → socket relay → receive-message
+  Typing indicator: emit typing → peer-typing → bouncing dots
+  Unread badge when panel closed
+  In-memory only — cleared on session end
+  --
+  Connection quality (🟢🟡🔴):
+  pc.getStats() polled every 3s
+  RTT < 100ms=good, < 300ms=fair, > 300ms=poor
+  --
+  Auto-reconnect on ICE drop:
+  pc.oniceconnectionstatechange → disconnected/failed
+  → createOffer({ iceRestart: true }) after 2s
+  --
+  Block user (🚫 button):
+  POST /api/users/block/:userId
+  Blocked users excluded from future matches
+end note
+
+' ═══════════════════════════════════════════════════════
+== 💬 STEP 6b — Text Chat (/chat/:sessionId) ==
+' ═══════════════════════════════════════════════════════
+
+UI -> UI : check pendingPeerLeft → /match?autostart if set
+UI -> Socket : emit("join-room", { sessionId })
+note right of UI
+  No getUserMedia — no camera/mic
+  No RTCPeerConnection — no WebRTC
+  Pure socket messaging only
+end note
+
+Socket -> Backend : join-room
+Backend --> Socket : peer-joined to both
+
+UI --> User : status dot: 🟠 waiting → 🟢 connected
+note right of UI
+  Fallback: setTimeout 2s → setConnected(true)
+  in case peer-joined fires on other peer only
+end note
+
+User -> UI : types message + sends
+UI -> Socket : emit("send-message", { sessionId, text })
+Socket -> Backend : relay
+Backend --> Socket : receive-message to other peer
+UI --> User : message bubble (mine=right, theirs=left)
+
+note right of UI
+  Typing indicator:
+  emit typing { isTyping: true } on keystroke
+  emit typing { isTyping: false } after 1.5s idle
+  peer-typing → bouncing dots shown
+end note
+
+' ═══════════════════════════════════════════════════════
+== 🔚 STEP 7 — End / Skip ==
+' ═══════════════════════════════════════════════════════
+
+alt Skip ⏭ — find next match
+  User -> UI : clicks Skip
+  UI -> Socket : emit("leave-room")
+  UI -> Backend : PATCH /api/sessions/:id/end { endReason: "skipped" }
+  UI --> User : navigate → /match?autostart=video|text
+  note right
+    Match page reads ?autostart param
+    Auto-triggers doSearch(mode) after 300ms
+    Seamless next-match experience
+  end note
+
+else End 📵 — go to ended screen
+  User -> UI : clicks End
+  UI -> Socket : emit("leave-room")
+  UI -> Backend : PATCH /api/sessions/:id/end { endReason: "completed" }
+  UI --> User : navigate → /ended
+  note right
+    /ended shows "That's a wrap 👋"
+    "Chat again" → /match
+    "Go home" → /
+  end note
+
+else Peer left / disconnected
+  Socket -> UI : peer-left { userId, endReason }
+  note right of Socket
+    Cached at socket.js level (pendingPeerLeft)
+    Checked on Call/Chat mount — never missed
+    Fallback: poll /api/sessions/:id every 3s
+  end note
+  UI --> User : navigate → /match?autostart=video|text
+end
+
+' ═══════════════════════════════════════════════════════
+== 🚪 STEP 8 — Logout ==
+' ═══════════════════════════════════════════════════════
+
+User -> UI : clicks "Log out" (Landing or Match nav)
+UI -> API : POST /api/users/auth/logout [auth]
+API -> Backend : fetch
+Backend --> API : 200
+UI -> Socket : disconnectSocket()
+note right of Socket
+  socket.disconnect()
+  socket = null
+  pendingMatchFound = null
+  pendingPeerLeft = null
+end note
+UI -> Store : clearAuth()
+note right of Store
+  Clears localStorage
+  user = null, tokens = null
+end note
+UI --> User : navigate → /
+
+' ═══════════════════════════════════════════════════════
+== ⚡ QUICK REFERENCE ==
+' ═══════════════════════════════════════════════════════
+
+note over User, Backend
+  <color:#16A085>PAGES & ROUTES</color>
+  /                  Landing     — hero, CTA, login/logout in nav
+  /register          Register    — displayName + email + GPS toggle
+  /login             Login       — email only
+  /preferences       Preferences — distance slider + mode (Guard)
+  /match             Match       — mode cards + find match (Guard)
+  /profile           Profile     — edit displayName, avatarUrl, languages (Guard)
+  /call/:sessionId   Call        — WebRTC video + text chat panel (Guard)
+  /chat/:sessionId   Chat        — text-only fullscreen chat (Guard)
+  /ended             Ended       — session ended screen (Guard)
+
+  <color:#8E44AD>STATE (Zustand — persisted)</color>
+  user, accessToken, refreshToken
+  setAuth() / clearAuth()
+
+  <color:#E67E22>API CLIENT (api.js)</color>
+  Auto-refresh on 401 → POST /auth/refresh → retry
+  409 → err.status=409, err.data = existing resource
+  All requests: Authorization: Bearer <token>
+
+  <color:#1A5276>SOCKET CLIENT (socket.js)</color>
+  Singleton — never replaced once created
+  connectSocket(token) — returns existing if alive
+  Caches: pendingMatchFound, pendingPeerLeft
+  On page refresh: main.jsx auto-reconnects
+
+  <color:#C0392B>GUARDS</color>
+  All /match /call /chat /preferences /ended routes
+  No accessToken → redirect /login
+end note
+
+@enduml
