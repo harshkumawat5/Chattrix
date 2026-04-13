@@ -19,7 +19,8 @@ const runExpiryJob = async () => {
         { status: "searching", expiresAt: { $lt: new Date() } },
         { status: "expired" }
       ),
-      User.updateMany({ _id: { $in: userIds } }, { status: "online" }),
+      // user may already be deleted by MongoDB TTL — ignore errors
+      User.updateMany({ _id: { $in: userIds }, status: { $exists: true } }, { status: "online" }).catch(() => {}),
     ]);
 
     userIds.forEach((userId) => {

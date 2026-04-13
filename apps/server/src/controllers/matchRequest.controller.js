@@ -19,10 +19,12 @@ const createMatchRequest = async (req, res, next) => {
     if (existing) return res.status(409).json({ message: "Already searching", data: existing });
 
     const isGps = user.locationSource === "gps";
+    // maxDistanceMeters from body (user chose on match screen) takes priority
+    // for IP users always use the env default regardless
     const maxDistance = isGps
-      ? (pref?.preferredMaxDistanceMeters ?? 10000)
+      ? (req.body.maxDistanceMeters ?? pref?.preferredMaxDistanceMeters ?? 10000)
       : getIpDefaultRadius();
-    const minDistance = isGps ? (pref?.preferredMinDistanceMeters ?? 0) : 0;
+    const minDistance = 0;
 
     // if pref is null or mode is "both", fall back to req.body.mode
     const prefMode = pref?.preferredMode;

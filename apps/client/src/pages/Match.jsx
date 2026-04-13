@@ -1,40 +1,40 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
-import { getSocket, connectSocket, getPendingMatch, clearPendingMatch, disconnectSocket } from "../lib/socket";
+import { getSocket, connectSocket, getPendingMatch, clearPendingMatch } from "../lib/socket";
 import { useAuthStore } from "../store/auth.store";
 import "./Match.css";
+
+const DISTANCES = [
+  { label: "Nearby",      meters: 1000,  icon: "🏠" },
+  { label: "Neighborhood",meters: 5000,  icon: "🏘" },
+  { label: "City",        meters: 20000, icon: "🏙" },
+  { label: "Anywhere",    meters: 100000,icon: "🌍" },
+];
 
 export default function Match() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { accessToken, user, clearAuth } = useAuthStore();
-  const [status, setStatus] = useState("idle");
-  const [mode, setMode] = useState("video");
+  const { accessToken, user } = useAuthStore();
+
+  const [status,      setStatus]      = useState("idle");
+  const [mode,        setMode]        = useState("video");
+  const [distIdx,     setDistIdx]     = useState(2); // default City
   const matchRequestId = useRef(null);
   const startSearchRef = useRef(null);
   const pollTimerRef   = useRef(null);
-  const modeRef = useRef("video");
+  const modeRef        = useRef("video");
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // auto-start search if navigated here with ?autostart=video|text (from skip)
   useEffect(() => {
     const autostart = searchParams.get("autostart");
     if (autostart === "video" || autostart === "text") {
       setMode(autostart);
-      // small delay so socket listeners are registered first
       const t = setTimeout(() => doSearch(autostart), 300);
       return () => clearTimeout(t);
     }
   }, []);
-
-  const logout = async () => {
-    await api.post("/api/users/auth/logout", null, accessToken).catch(() => {});
-    disconnectSocket();
-    clearAuth();
-    navigate("/");
-  };
 
   useEffect(() => {
     const socket = connectSocket(accessToken);
@@ -42,26 +42,23 @@ export default function Match() {
     const pending = getPendingMatch();
     if (pending) {
       clearPendingMatch();
-      const route = pending.mode === "text" ? `/chat/${pending.sessionId}` : `/call/${pending.sessionId}`;
-      navigate(route);
+      navigate(pending.mode === "text" ? `/chat/${pending.sessionId}` : `/call/${pending.sessionId}`);
       return;
     }
 
     const onMatchFound = ({ sessionId, mode: sessionMode }) => {
       clearPendingMatch();
-      const route = sessionMode === "text" ? `/chat/${sessionId}` : `/call/${sessionId}`;
-      navigate(route);
+      navigate(sessionMode === "text" ? `/chat/${sessionId}` : `/call/${sessionId}`);
     };
 
     const onMatchExpired = () => {
-      // only show expired if we're still actively searching (not cancelled)
       if (matchRequestId.current) {
         setStatus("expired");
         matchRequestId.current = null;
       }
     };
 
-    socket.on("match-found", onMatchFound);
+    socket.on("match-found",   onMatchFound);
     socket.on("match-expired", onMatchExpired);
 
     const startPolling = (requestId) => {
@@ -74,12 +71,8 @@ export default function Match() {
             pollTimerRef.current = null;
             const sessions = await api.get("/api/users/me/sessions?status=active", accessToken);
             const session = sessions.data?.[0];
-            if (session) {
-              const route = session.mode === "text" ? `/chat/${session._id}` : `/call/${session._id}`;
-              navigate(route);
-            }
+            if (session) navigate(session.mode === "text" ? `/chat/${session._id}` : `/call/${session._id}`);
           } else if (data.data?.status === "expired") {
-            // only show expired — ignore "cancelled" (user cancelled intentionally)
             clearInterval(pollTimerRef.current);
             pollTimerRef.current = null;
             if (matchRequestId.current) setStatus("expired");
@@ -96,19 +89,20 @@ export default function Match() {
     startSearchRef.current = startPolling;
 
     return () => {
-      socket.off("match-found", onMatchFound);
+      socket.off("match-found",   onMatchFound);
       socket.off("match-expired", onMatchExpired);
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
   }, [accessToken, navigate]);
 
-  const doSearch = async (selectedMode) => {
+  const doSearch = async (selectedMode, selectedDistIdx) => {
+    const idx = selectedDistIdx ?? distIdx;
+    const maxDistance = DISTANCES[idx].meters;
     setStatus("searching");
     try {
-      const data = await api.post("/api/match-requests", { mode: selectedMode }, accessToken);
+      const data = await api.post("/api/match-requests", { mode: selectedMode, maxDistanceMeters: maxDistance }, accessToken);
       if (data.data?.session) {
-        const route = selectedMode === "text" ? `/chat/${data.data.session._id}` : `/call/${data.data.session._id}`;
-        navigate(route);
+        navigate(selectedMode === "text" ? `/chat/${data.data.session._id}` : `/call/${data.data.session._id}`);
         return;
       }
       matchRequestId.current = data.data?._id;
@@ -117,10 +111,9 @@ export default function Match() {
       if (err.status === 409 && err.data?._id) {
         try {
           await api.delete(`/api/match-requests/${err.data._id}`, accessToken);
-          const data = await api.post("/api/match-requests", { mode: selectedMode }, accessToken);
+          const data = await api.post("/api/match-requests", { mode: selectedMode, maxDistanceMeters: maxDistance }, accessToken);
           if (data.data?.session) {
-            const route = selectedMode === "text" ? `/chat/${data.data.session._id}` : `/call/${data.data.session._id}`;
-            navigate(route);
+            navigate(selectedMode === "text" ? `/chat/${data.data.session._id}` : `/call/${data.data.session._id}`);
             return;
           }
           matchRequestId.current = data.data?._id;
@@ -137,13 +130,11 @@ export default function Match() {
       await api.delete(`/api/match-requests/${matchRequestId.current}`, accessToken).catch(() => {});
       matchRequestId.current = null;
     }
-    // clear poll timer via ref so it stops immediately
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
+    if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
     setStatus("idle");
   };
+
+  const isGps = user?.locationSource === "gps";
 
   return (
     <div className="match-page">
@@ -151,41 +142,51 @@ export default function Match() {
 
       <nav className="match-nav">
         <span className="logo">chattrix</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => navigate("/profile")} style={{ gap: 6 }}>
-            👤 {user?.displayName}
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={logout}>Log out</button>
-        </div>
+        <span className="match-username">@{user?.username}</span>
       </nav>
 
       <main className="match-main">
         {status === "idle" && (
           <div className="match-idle fade-up">
             <div className="match-avatar">
-              {user?.displayName?.[0]?.toUpperCase() || "?"}
+              {user?.username?.[0]?.toUpperCase() || "?"}
             </div>
             <h2>How do you want to connect?</h2>
-            <p>Pick a mode and we'll find someone nearby.</p>
 
             <div className="mode-cards">
-              <button
-                className={`mode-card ${mode === "video" ? "active" : ""}`}
-                onClick={() => setMode("video")}
-              >
+              <button className={`mode-card ${mode === "video" ? "active" : ""}`} onClick={() => setMode("video")}>
                 <span className="mode-icon">📹</span>
                 <span className="mode-title">Video Chat</span>
                 <span className="mode-desc">See & talk face to face</span>
               </button>
-              <button
-                className={`mode-card ${mode === "text" ? "active" : ""}`}
-                onClick={() => setMode("text")}
-              >
+              <button className={`mode-card ${mode === "text" ? "active" : ""}`} onClick={() => setMode("text")}>
                 <span className="mode-icon">💬</span>
                 <span className="mode-title">Text Chat</span>
                 <span className="mode-desc">Anonymous, no camera needed</span>
               </button>
             </div>
+
+            {/* distance — only meaningful for GPS users */}
+            {isGps ? (
+              <div className="dist-section">
+                <div className="dist-label">
+                  📍 Match distance — <span className="dist-value">{DISTANCES[distIdx].label}</span>
+                </div>
+                <div className="dist-pills">
+                  {DISTANCES.map((d, i) => (
+                    <button
+                      key={i}
+                      className={`dist-pill ${distIdx === i ? "active" : ""}`}
+                      onClick={() => setDistIdx(i)}
+                    >
+                      {d.icon} {d.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="dist-ip-note">🌐 Matching within your city (IP-based)</p>
+            )}
 
             <button className="btn btn-primary btn-lg" onClick={() => doSearch(mode)}>
               Find a match →
@@ -201,7 +202,7 @@ export default function Match() {
               <div className="pulse-dot" />
             </div>
             <h2>Looking nearby...</h2>
-            <p>Finding someone for {mode === "text" ? "text" : "video"} chat.</p>
+            <p>Finding someone for {mode === "text" ? "text" : "video"} chat{isGps ? ` within ${DISTANCES[distIdx].label.toLowerCase()}` : ""}.</p>
             <button className="btn btn-ghost btn-sm" onClick={cancel}>Cancel</button>
           </div>
         )}
@@ -210,7 +211,7 @@ export default function Match() {
           <div className="match-idle fade-up">
             <div className="match-avatar" style={{ background: "var(--bg3)" }}>😔</div>
             <h2>No one nearby right now</h2>
-            <p>Try again in a moment.</p>
+            <p>Try a wider distance or check back in a moment.</p>
             <button className="btn btn-primary btn-lg" onClick={() => doSearch(mode)}>
               Try again →
             </button>

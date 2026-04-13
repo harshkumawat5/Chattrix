@@ -41,12 +41,13 @@ Rendered PNGs are in [`docs/lld_backend.png`](./docs/lld_backend.png) and [`docs
 | Rule | Why |
 |------|-----|
 | `mode` enum is `"video"` or `"text"` only — **audio was removed** | MatchRequest and ChatSession both enforce this |
-| `refreshToken` is `select: false` — **never returned in API responses** | Security — always hashed with bcrypt |
 | `req.user._id` comes from JWT middleware — **never trust userId from request body** | All protected controllers use `req.user._id` |
 | All env values read from `process.env` — **nothing hardcoded** | Rate limits, TTLs, STUN servers, JWT secrets all in `.env` |
 | `UserPreference` is created via **upsert** on register — not `create()` | Prevents duplicate key errors on retry |
 | `MatchRequest` has a **unique partial index** on `user+status=searching` | One active search per user at a time |
 | Mongoose 9.x `pre("validate")` hooks use **`throw`** not `next()` | `next` is not a function in Mongoose 9 |
+| `User.expiresAt` is extended on **every authenticated request** via `auth.middleware.js` | Keep-alive — 15 min idle = session expires |
+| `username` is **permanent** for the session — cannot be changed | It is the identity for that session |
 
 ### Frontend
 
@@ -58,7 +59,8 @@ Rendered PNGs are in [`docs/lld_backend.png`](./docs/lld_backend.png) and [`docs
 | `cancelled` flag in `useEffect` prevents **stale async callbacks** | Set to `true` in cleanup, checked before every state update |
 | WebRTC offerer is determined by **`myUserId < otherId`** (lexicographic) | Deterministic — prevents both peers creating offers |
 | ICE candidates are **queued** until `remoteDescription` is set | Prevents `addIceCandidate` errors |
-| `api.js` auto-refreshes on **401** and queues parallel requests | One refresh at a time, all queued requests retry after |
+| On **401** — `clearAuth()` + redirect `/` | No refresh token — session expired, user must re-enter username |
+| `main.jsx` checks JWT expiry on load — clears stale tokens | Prevents using expired token from localStorage |
 
 ---
 

@@ -5,9 +5,21 @@ import App from "./App";
 import { useAuthStore } from "./store/auth.store";
 import { connectSocket } from "./lib/socket";
 
-// reconnect socket on page refresh if token exists
-const { accessToken } = useAuthStore.getState();
-if (accessToken) connectSocket(accessToken);
+const { accessToken, clearAuth } = useAuthStore.getState();
+
+if (accessToken) {
+  // verify token is not expired before reconnecting
+  try {
+    const payload = JSON.parse(atob(accessToken.split(".")[1]));
+    if (payload.exp * 1000 < Date.now()) {
+      clearAuth(); // token expired — send to username screen
+    } else {
+      connectSocket(accessToken);
+    }
+  } catch {
+    clearAuth();
+  }
+}
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>

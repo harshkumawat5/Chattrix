@@ -1,18 +1,97 @@
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuthStore } from "../store/auth.store";
 import { api } from "../lib/api";
-import { disconnectSocket } from "../lib/socket";
+import { useAuthStore } from "../store/auth.store";
+import { connectSocket } from "../lib/socket";
 import "./Landing.css";
 
 export default function Landing() {
   const navigate = useNavigate();
-  const { user, accessToken, clearAuth } = useAuthStore();
+  const { user, accessToken, setAuth } = useAuthStore();
 
-  const logout = async () => {
-    await api.post("/api/users/auth/logout", null, accessToken).catch(() => {});
-    disconnectSocket();
-    clearAuth();
-    navigate("/");
+  const [username,     setUsername]     = useState("");
+  const [status,       setStatus]       = useState("idle"); // idle | checking | available | taken | invalid | loading
+  const [suggestions,  setSuggestions]  = useState([]);
+  const [useGps,       setUseGps]       = useState(false);
+  const [error,        setError]        = useState("");
+  const debounceRef = useRef(null);
+
+  // if already logged in with valid token → go straight to match
+  useEffect(() => {
+    if (user && accessToken) navigate("/match");
+  }, []);
+
+  const validate = (val) => /^[a-z0-9_]+$/.test(val) && val.length >= 3 && val.length <= 20;
+
+  const handleUsernameChange = (e) => {
+    const val = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "");
+    setUsername(val);
+    setSuggestions([]);
+    setError("");
+
+    if (!val) { setStatus("idle"); return; }
+    if (val.length < 3) { setStatus("invalid"); return; }
+    if (!validate(val)) { setStatus("invalid"); return; }
+
+    setStatus("checking");
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await api.get(`/api/users/check/${val}`);
+        if (data.available) {
+          setStatus("available");
+        } else {
+          setStatus("taken");
+          setSuggestions(data.suggestions || []);
+        }
+      } catch {
+        setStatus("idle");
+      }
+    }, 400);
+  };
+
+  const getGps = () =>
+    new Promise((res, rej) =>
+      navigator.geolocation.getCurrentPosition(
+        (p) => res([p.coords.longitude, p.coords.latitude]),
+        () => rej()
+      )
+    );
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (status !== "available") return;
+    setStatus("loading");
+    setError("");
+    try {
+      let location;
+      if (useGps) {
+        try { location = { coordinates: await getGps() }; } catch {}
+      }
+      const data = await api.post("/api/users/auth/register", {
+        username,
+        ...(location ? { location } : {}),
+      });
+      setAuth(data.data, data.accessToken);
+      connectSocket(data.accessToken);
+      navigate("/match");
+    } catch (err) {
+      setError(err.message);
+      setStatus("available");
+    }
+  };
+
+  const pickSuggestion = (s) => {
+    setUsername(s);
+    setStatus("available");
+    setSuggestions([]);
+  };
+
+  const statusIcon = {
+    checking:  <span className="username-status checking">⏳</span>,
+    available: <span className="username-status available">✅</span>,
+    taken:     <span className="username-status taken">❌</span>,
+    invalid:   <span className="username-status taken">⚠️</span>,
   };
 
   return (
@@ -21,51 +100,77 @@ export default function Landing() {
 
       <nav className="landing-nav">
         <span className="logo">chattrix</span>
-        {user ? (
-          <div style={{ display: "flex", gap: 10 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => navigate("/match")}>
-              Start Chatting
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={logout}>
-              Log out
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: "flex", gap: 10 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => navigate("/login")}>Log in</button>
-            <button className="btn btn-primary btn-sm" onClick={() => navigate("/register")}>Sign up</button>
-          </div>
-        )}
+        <div className="badge">🌍 Proximity-based random chat</div>
       </nav>
 
       <main className="landing-hero fade-up">
-        <div className="badge">🌍 Proximity-based random chat</div>
         <h1>
           Meet people<br />
           <span className="gradient-text">near you.</span>
         </h1>
         <p className="hero-sub">
-          Instant video & random chats with strangers nearby.<br />
-          No algorithms. No feeds. Just real conversations.
+          Pick a username and start chatting instantly.<br />
+          No sign-up. No password. Gone in 15 minutes.
         </p>
-        <div className="hero-actions">
+
+        <form className="username-form" onSubmit={submit}>
+          <div className="username-input-wrap">
+            <span className="username-prefix">@</span>
+            <input
+              className="username-input"
+              placeholder="pick a username"
+              value={username}
+              onChange={handleUsernameChange}
+              maxLength={20}
+              autoComplete="off"
+              autoFocus
+            />
+            {statusIcon[status]}
+          </div>
+
+          {status === "taken" && suggestions.length > 0 && (
+            <div className="suggestions">
+              <span className="suggestions-label">Try:</span>
+              {suggestions.map((s) => (
+                <button key={s} type="button" className="suggestion-pill" onClick={() => pickSuggestion(s)}>
+                  @{s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {status === "invalid" && username.length > 0 && (
+            <p className="username-hint">3–20 chars, letters, numbers, underscores only</p>
+          )}
+
+          <div className="location-toggle" onClick={() => setUseGps((v) => !v)}>
+            <div className={`toggle ${useGps ? "on" : ""}`} />
+            <div>
+              <div className="toggle-label">
+                {useGps ? "📍 Using GPS location" : "🌐 Using IP location"}
+              </div>
+              <div className="toggle-sub">
+                {useGps ? "Better match accuracy" : "No permission needed — city-level"}
+              </div>
+            </div>
+          </div>
+
+          {error && <div className="auth-error">{error}</div>}
+
           <button
             className="btn btn-primary btn-lg"
-            onClick={() => navigate(user ? "/match" : "/register")}
+            type="submit"
+            disabled={status !== "available"}
+            style={{ width: "100%" }}
           >
-            {user ? "Start chatting →" : "Create account →"}
+            {status === "loading" ? "Entering..." : "Get started →"}
           </button>
-          {!user && (
-            <button className="btn btn-ghost btn-lg" onClick={() => navigate("/login")}>
-              Log in
-            </button>
-          )}
-        </div>
+        </form>
 
         <div className="hero-stats">
           <div className="stat"><span>⚡</span> Instant match</div>
           <div className="stat"><span>📍</span> Location-aware</div>
-          <div className="stat"><span>🎲</span> Random & real</div>
+          <div className="stat"><span>⏱</span> 15 min sessions</div>
         </div>
       </main>
     </div>

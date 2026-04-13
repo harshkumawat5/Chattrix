@@ -205,8 +205,8 @@ Skip → auto-search next    End → /ended screen
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `_id` | ObjectId | auto | |
-| `displayName` | String | ✅ | 2–50 chars |
-| `email` | String | ❌ | unique sparse |
+| `username` | String | ✅ | 3–20 chars, unique, lowercase, `[a-z0-9_]` only |
+| `displayName` | String | ✅ | 2–50 chars, set to username on register |
 | `avatarUrl` | String | ❌ | default `null` |
 | `languages` | [String] | ❌ | default `[]` |
 | `location` | GeoPoint | ✅ | `{ type: "Point", coordinates: [lon, lat] }` |
@@ -214,12 +214,14 @@ Skip → auto-search next    End → /ended screen
 | `locationUpdatedAt` | Date | ❌ | |
 | `status` | String | ❌ | enum: `"offline"` \| `"online"` \| `"searching"` \| `"in_call"` |
 | `isDiscoverable` | Boolean | ❌ | default `true` |
-| `blockedUsers` | [ObjectId] | ❌ | ref: User |
-| `refreshToken` | String | ❌ | hashed, `select:false` — never returned in responses |
+| `blockedUsers` | [ObjectId] | ❌ | ref: User, session-scoped |
+| `expiresAt` | Date | ❌ | default `now + SESSION_TTL_MS` — MongoDB TTL auto-deletes |
 | `createdAt` | Date | auto | |
 | `updatedAt` | Date | auto | |
 
-**Indexes:** `location` (2dsphere), `status + isDiscoverable`
+**Indexes:** `location` (2dsphere), `status + isDiscoverable`, `username`, `expiresAt` (TTL)
+
+> `refreshToken` and `email` removed. Auth is username-only with 15-min session TTL.
 
 </details>
 
@@ -329,13 +331,12 @@ Skip → auto-search next    End → /ended screen
 |-----|------|-------------|
 | `user` | `User \| null` | Full user object from backend |
 | `accessToken` | `string \| null` | JWT, expires in 15m |
-| `refreshToken` | `string \| null` | JWT, expires in 7d |
 
-**Actions:** `setAuth(user, accessToken, refreshToken)` · `clearAuth()`
+**Actions:** `setAuth(user, accessToken)` · `clearAuth()`
 
 **Persistence:** localStorage key `"chattrix-auth"`
 
-**On page load:** `main.jsx` reads `accessToken` → `connectSocket(accessToken)`
+**On page load:** `main.jsx` checks JWT expiry → if expired `clearAuth()` → else `connectSocket(accessToken)`
 
 </details>
 
@@ -369,15 +370,14 @@ Skip → auto-search next    End → /ended screen
 
 | Route | Page | Access | Notes |
 |-------|------|--------|-------|
-| `/` | Landing | Public | Hero + CTA |
-| `/register` | Register | Public | displayName + email + GPS toggle |
-| `/login` | Login | Public | Email only |
+| `/` | Landing | Public | Username entry screen |
 | `/preferences` | Preferences | 🔒 Guard | Distance slider + mode |
 | `/match` | Match | 🔒 Guard | Mode cards + find match |
-| `/profile` | Profile | 🔒 Guard | Edit displayName, avatar, languages |
 | `/call/:sessionId` | Call | 🔒 Guard | WebRTC video session |
 | `/chat/:sessionId` | Chat | 🔒 Guard | Text-only session |
 | `/ended` | Ended | 🔒 Guard | Session ended screen |
+
+> **Guard:** no `accessToken` or expired token → redirect `/`
 
 > **Guard:** no `accessToken` → redirect `/login`
 
@@ -442,10 +442,8 @@ Skip → auto-search next    End → /ended screen
 
 | Method | Endpoint | Body | Response |
 |--------|----------|------|----------|
-| `POST` | `/api/users/auth/register` | `{ displayName, email?, location? }` | `201 { data: user, accessToken, refreshToken }` |
-| `POST` | `/api/users/auth/login` | `{ email }` | `200 { data: user, accessToken, refreshToken }` |
-| `POST` | `/api/users/auth/refresh` | `{ refreshToken }` | `200 { accessToken, refreshToken }` |
-| `POST` | `/api/users/auth/logout` | — | `200 { message }` |
+| `GET` | `/api/users/check/:username` | — | `{ available: bool, suggestions? }` |
+| `POST` | `/api/users/auth/register` | `{ username, location? }` | `201 { data: user, accessToken }` |
 
 </details>
 

@@ -58,7 +58,55 @@
 .match-idle h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
 .match-idle p  { color: var(--muted); font-size: 15px; margin-top: -8px; }
 
-/* mode selector cards */
+.match-username {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* distance section */
+.dist-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.dist-label {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: left;
+}
+
+.dist-value { color: var(--accent3); font-weight: 600; }
+
+.dist-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dist-pill {
+  padding: 6px 14px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.dist-pill:hover  { border-color: var(--border2); color: var(--text); }
+.dist-pill.active { border-color: var(--accent2); background: #7c3aed14; color: var(--accent3); }
+
+.dist-ip-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: -8px;
+}
 .mode-cards {
   display: flex;
   gap: 12px;

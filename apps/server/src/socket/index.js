@@ -1,81 +1,97 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
+const fetch = require("node-fetch");
 const { register, unregister } = require("./registry");
 const { registerSessionHandlers } = require("./handlers/session.handler");
 const { registerSignalHandlers } = require("./handlers/signal.handler");
 
-// Parsed from comma-separated STUN/TURN env vars.
-// TURN is required for many NAT combinations where STUN-only fails.
-const buildIceServers = () => {
-  const stunServers = (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302")
+// ── ICE config — Metered TURN + Google STUN ──────────────────────
+// Credentials fetched from Metered API on server side only.
+// API key is NEVER sent to the client — only the resulting ice servers are.
+// Cached for 12h since Metered credentials are valid for 24h.
+
+let iceCache = { servers: null, fetchedAt: 0 };
+const ICE_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+
+const fallbackStun = () =>
+  (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302")
     .split(",")
-    .map((url) => url.trim())
-    .filter(Boolean)
-    .map((url) => ({ urls: url }));
+    .map((url) => ({ urls: url.trim() }))
+    .filter((s) => s.urls);
 
-  const turnUrls = (process.env.TURN_SERVERS || "")
-    .split(",")
-    .map((url) => url.trim())
-    .filter(Boolean);
+const getIceServers = async () => {
+  const now = Date.now();
 
-  if (!turnUrls.length) return stunServers;
+  // return cache if still fresh
+  if (iceCache.servers && now - iceCache.fetchedAt < ICE_CACHE_TTL) {
+    return iceCache.servers;
+  }
 
-  const username = process.env.TURN_USERNAME || "";
-  const credential = process.env.TURN_CREDENTIAL || "";
+  const appName = process.env.METERED_APP_NAME;
+  const apiKey  = process.env.METERED_API_KEY;
 
-  if (!username || !credential) return stunServers;
+  if (!appName || !apiKey) {
+    console.warn("[ICE] METERED_APP_NAME or METERED_API_KEY not set — using STUN only");
+    return fallbackStun();
+  }
 
-  return [
-    ...stunServers,
-    {
-      urls: turnUrls,
-      username,
-      credential,
-    },
-  ];
+  try {
+    const res = await fetch(
+      `https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`,
+      { timeout: 5000 }
+    );
+
+    if (!res.ok) throw new Error(`Metered API returned ${res.status}`);
+
+    const servers = await res.json();
+    iceCache = { servers, fetchedAt: now };
+    console.log(`[ICE] Fetched ${servers.length} ICE servers from Metered`);
+    return servers;
+  } catch (err) {
+    console.error("[ICE] Failed to fetch Metered credentials:", err.message, "— falling back to STUN");
+    return fallbackStun();
+  }
 };
 
-// Connection attempts per IP
+// ── Connection rate limit ─────────────────────────────────────────
 const connectionAttempts = new Map();
 
 const isConnectionAllowed = (ip) => {
   const now = Date.now();
   const windowMs = Number(process.env.RATE_LIMIT_SOCKET_CONN_WINDOW_MS);
-  const max = Number(process.env.RATE_LIMIT_SOCKET_CONN_MAX);
-  const entry = connectionAttempts.get(ip);
+  const max      = Number(process.env.RATE_LIMIT_SOCKET_CONN_MAX);
+  const entry    = connectionAttempts.get(ip);
 
   if (!entry || now - entry.windowStart > windowMs) {
     connectionAttempts.set(ip, { count: 1, windowStart: now });
     return true;
   }
-
   if (entry.count >= max) return false;
-
   entry.count += 1;
   return true;
 };
 
-// Message rate per user
+// ── Message rate limit ────────────────────────────────────────────
 const messageCounts = new Map();
+// WebRTC signalling can burst quickly — don't throttle these
 const signalingEvents = new Set(["offer", "answer", "ice-candidate"]);
 
 const isMessageAllowed = (userId) => {
-  const now = Date.now();
+  const now     = Date.now();
   const windowMs = Number(process.env.RATE_LIMIT_SOCKET_MSG_WINDOW_MS);
-  const max = Number(process.env.RATE_LIMIT_SOCKET_MSG_MAX);
-  const entry = messageCounts.get(userId);
+  const max      = Number(process.env.RATE_LIMIT_SOCKET_MSG_MAX);
+  const entry    = messageCounts.get(userId);
 
   if (!entry || now - entry.windowStart > windowMs) {
     messageCounts.set(userId, { count: 1, windowStart: now });
     return true;
   }
-
   if (entry.count >= max) return false;
-
   entry.count += 1;
   return true;
 };
 
+// ── Init ──────────────────────────────────────────────────────────
 const initSocket = (httpServer) => {
   const allowedOrigins = (process.env.CLIENT_ORIGIN || "*").split(",").map((o) => o.trim());
 
@@ -89,7 +105,10 @@ const initSocket = (httpServer) => {
     },
   });
 
-  // ── Connection rate limit ────────────────────────────────────
+  // warm up ICE cache on startup so first connection is instant
+  getIceServers().catch(() => {});
+
+  // ── Connection rate limit ──────────────────────────────────────
   io.use((socket, next) => {
     const ip = socket.handshake.address;
     if (!isConnectionAllowed(ip)) {
@@ -98,8 +117,7 @@ const initSocket = (httpServer) => {
     return next();
   });
 
-  // ── Auth middleware ──────────────────────────────────────────
-  // Client must pass JWT: io({ auth: { token: "Bearer <accessToken>" } })
+  // ── JWT auth ───────────────────────────────────────────────────
   io.use((socket, next) => {
     const header = socket.handshake.auth?.token;
     if (!header?.startsWith("Bearer ")) {
@@ -114,18 +132,19 @@ const initSocket = (httpServer) => {
     }
   });
 
-  io.on("connection", (socket) => {
+  // ── Connection handler ─────────────────────────────────────────
+  io.on("connection", async (socket) => {
     const { userId } = socket.data;
 
     register(userId, socket);
 
-    socket.emit("ice-config", { iceServers: buildIceServers() });
+    // send ICE config — includes TURN credentials from Metered
+    const iceServers = await getIceServers();
+    socket.emit("ice-config", { iceServers });
 
-    // ── Message rate limit ───────────────────────────────────
+    // ── Message rate limit ───────────────────────────────────────
     socket.use(([event], next) => {
-      // WebRTC signaling can burst quickly (especially ICE); do not throttle these.
       if (signalingEvents.has(event)) return next();
-
       if (!isMessageAllowed(userId)) {
         socket.emit("error", { message: "RATE_LIMIT: too many messages, slow down." });
         return;
