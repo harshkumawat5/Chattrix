@@ -55,8 +55,7 @@ const userSchema = new Schema(
     // session expiry — MongoDB TTL auto-deletes after this timestamp
     expiresAt: {
       type: Date,
-      default: () => new Date(Date.now() + Number(process.env.SESSION_TTL_MS)),
-      index: true,
+      default: () => new Date(Date.now() + (Number(process.env.SESSION_TTL_MS) || 900000)),
     },
   },
   { timestamps: true, versionKey: false }
@@ -64,7 +63,6 @@ const userSchema = new Schema(
 
 userSchema.index({ location: "2dsphere" });
 userSchema.index({ status: 1, isDiscoverable: 1 });
-userSchema.index({ username: 1 });
 // TTL index — MongoDB auto-deletes document when expiresAt is reached
 userSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 

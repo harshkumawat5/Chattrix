@@ -62,7 +62,7 @@ const register = async (req, res, next) => {
       resolvedLocation = { type: "Point", coordinates: geo ? geo.coordinates : [0, 0] };
     }
 
-    const ttl = Number(process.env.SESSION_TTL_MS);
+    const ttl = Number(process.env.SESSION_TTL_MS) || 900000;
     const user = await User.create({
       username: clean,
       displayName: clean,

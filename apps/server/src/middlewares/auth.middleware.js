@@ -13,7 +13,7 @@ const auth = async (req, res, next) => {
     req.user = { _id: payload.sub, username: payload.username, displayName: payload.displayName };
 
     // keep-alive: extend expiresAt on every authenticated request
-    const ttl = Number(process.env.SESSION_TTL_MS);
+    const ttl = Number(process.env.SESSION_TTL_MS) || 900000;
     User.findByIdAndUpdate(payload.sub, { expiresAt: new Date(Date.now() + ttl) }).catch(() => {});
 
     return next();
