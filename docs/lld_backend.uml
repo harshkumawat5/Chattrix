@@ -59,21 +59,32 @@ participant "🔌 Socket.io"        as Socket   #1A5276
 participant "⏱ Expiry Job"        as Job      #6C3483
 
 ' ═══════════════════════════════════════════════════════
-== 🔐 STEP 1 — Register & JWT Auth ==
+== 🔐 STEP 1 — Username Claim (Register) ==
 ' ═══════════════════════════════════════════════════════
 
-ClientA -> API : POST /api/users/auth/register\n{ displayName, email, location? }
+ClientA -> API : GET /api/users/check/:username
 note right of API
   <color:#784212>authLimiter:</color> 10 req / 15 min per IP
-  <color:#784212>apiLimiter:</color> 400 req / 15 min per IP
+  username: 3-20 chars, [a-z0-9_] only
+end note
+
+alt Username taken
+  API --> ClientA : { available: false, suggestions: ["alex_99", ...] }
+else Username available
+  API --> ClientA : { available: true }
+end
+
+ClientA -> API : POST /api/users/auth/register\n{ username, location? }
+note right of API
+  No email. No password. No refresh token.
+  Username = identity for this session only.
 end note
 
 alt GPS coordinates provided
   API -> API : locationSource = <color:#27AE60>"gps"</color>
   note right
     ✅ Precise matching
-    maxDistance = preferredMaxDistanceMeters
-    default 10km
+    maxDistance from match request body
   end note
 else No coordinates — fallback to IP
   API -> GeoIP : resolveCoordinatesFromIp(clientIP)
@@ -82,59 +93,34 @@ else No coordinates — fallback to IP
     private IPs → fallback [0,0] for local dev
   end note
   GeoIP -> GeoIP : call ip-api.com
-  GeoIP --> API : { coordinates: [lon, lat], city }
+  GeoIP --> API : { coordinates: [lon, lat] }
   API -> API : locationSource = <color:#E67E22>"ip"</color>
   note right
     ⚠️ City-level accuracy
-    maxDistance = GEOIP_DEFAULT_RADIUS_METERS
+    maxDistance = GEOIP_DEFAULT_RADIUS_METERS (fixed)
   end note
 end
 
-API -> DB : User.create({ location, locationSource })
-API -> DB : UserPreference.findOneAndUpdate (upsert defaults)
+API -> DB : User.create({ username, displayName=username,\n  location, locationSource,\n  expiresAt: now + SESSION_TTL_MS })
 note right of DB
-  <color:#16A085>Preferences auto-created:</color>
-  minDistance = 0m
-  maxDistance = 10,000m
-  mode = "both"
+  <color:#C0392B>MongoDB TTL index on expiresAt</color>
+  Auto-deletes user document after SESSION_TTL_MS
+  Username freed for others after expiry
 end note
+API -> DB : UserPreference.findOneAndUpdate (upsert)
 DB --> API : user doc
 
-API -> API : signAccessToken(user)\nsignRefreshToken(user)\nhashToken(refreshToken) → DB
+API -> API : signAccessToken(user)\n{ sub, username, displayName }
 note right
   <color:#C0392B>JWT_EXPIRES_IN</color> = 15m (from .env)
-  <color:#C0392B>JWT_REFRESH_EXPIRES_IN</color> = 7d (from .env)
-  refreshToken stored hashed — never raw
+  No refresh token — session is temporary by design
+  Every API call extends expiresAt (keep-alive)
 end note
 
-API --> ClientA : <color:#27AE60>201</color> { data: user, accessToken, refreshToken }
+API --> ClientA : <color:#27AE60>201</color> { data: user, accessToken }
 
 ' ═══════════════════════════════════════════════════════
-== 🔄 STEP 2 — Token Lifecycle ==
-' ═══════════════════════════════════════════════════════
-
-ClientA -> API : POST /api/users/auth/login { email }
-API -> DB : User.findOne({ email })
-DB --> API : user
-API --> ClientA : <color:#27AE60>200</color> { accessToken, refreshToken }
-
-ClientA -> API : POST /api/users/auth/refresh { refreshToken }
-API -> DB : User.findById + select("+refreshToken")
-API -> API : compareToken(raw, hashed) ✅
-API -> DB : save new hashed refreshToken
-API --> ClientA : <color:#27AE60>200</color> { accessToken, refreshToken }
-note right
-  Token rotation on every refresh
-  Old refresh token invalidated immediately
-  Client auto-retries 401s via api.js interceptor
-end note
-
-ClientA -> API : POST /api/users/auth/logout [auth]
-API -> DB : refreshToken = null\nstatus = "offline"
-API --> ClientA : <color:#27AE60>200</color> { message: "Logged out" }
-
-' ═══════════════════════════════════════════════════════
-== 🔌 STEP 3 — Socket Connection & Auth ==
+== 🔌 STEP 2 — Socket Connection & TURN/STUN ==
 ' ═══════════════════════════════════════════════════════
 
 ClientA -> Socket : io.connect({ auth: { token: "Bearer <accessToken>" } })
@@ -161,44 +147,34 @@ else Within limit
     Socket --> ClientA : <color:#C0392B>AUTH_INVALID</color> — rejected
   else Valid token
     Socket -> Socket : registry.set(userId, socket)\ncache match-found + peer-left events
-    Socket --> ClientA : <color:#27AE60>ice-config</color>\n{ iceServers: parsed from STUN_SERVERS env }
-    note right
-      STUN_SERVERS = comma-separated in .env
-      TURN = future enhancement
+
+    Socket -> Socket : getIceServers()\ncheck cache (12h TTL)
+    note right of Socket
+      <color:#1A5276>Metered.ca TURN API:</color>
+      GET https://chattrix-app.metered.live/api/v1/turn/credentials
+      API key = METERED_API_KEY (server only, never sent to client)
+      Returns: STUN + 4 TURN servers (UDP, TCP, port 443, TLS)
+      Cached 12h — warmed up on server startup
+      Fallback: Google STUN if Metered unreachable
     end note
+
+    Socket --> ClientA : <color:#27AE60>ice-config</color>\n{ iceServers: [STUN + TURN credentials] }
   end
 end
 
 ' ═══════════════════════════════════════════════════════
-== 🔵 STEP 4 — Set Preferences (Optional) ==
+== 🔴 STEP 3 — Enter Matchmaking Queue ==
 ' ═══════════════════════════════════════════════════════
 
-ClientA -> API : PUT /api/users/me/preferences\n{ preferredMaxDistanceMeters, preferredMode }
-note right of API
-  Requires: <color:#C0392B>Authorization: Bearer <token></color>
-  userId from req.user._id — cannot be spoofed
-end note
-API -> DB : UserPreference.findOneAndUpdate({ user: req.user._id })
-DB --> API : updated pref
-API --> ClientA : <color:#27AE60>200</color> { data: preferences }
-
-note over ClientA, DB
-  <color:#E67E22>GPS users</color> → preference range applied in matching
-  <color:#E67E22>IP users</color>  → GEOIP_DEFAULT_RADIUS_METERS always applied (preference ignored)
-end note
-
-' ═══════════════════════════════════════════════════════
-== 🔴 STEP 5 — Enter Matchmaking Queue ==
-' ═══════════════════════════════════════════════════════
-
-ClientA -> API : POST /api/match-requests { mode: "video"|"text" }
-ClientB -> API : POST /api/match-requests { mode: "video"|"text" }
+ClientA -> API : POST /api/match-requests\n{ mode: "video"|"text", maxDistanceMeters? }
+ClientB -> API : POST /api/match-requests\n{ mode: "video"|"text", maxDistanceMeters? }
 
 note right of API
   <color:#784212>matchLimiter:</color> 15 req / 1 min per userId
   <color:#784212>matchCooldownGuard:</color> 2s cooldown per userId
   userId from req.user._id (JWT) — not from body
-  mode: "video" → /call/:id | "text" → /chat/:id
+  maxDistanceMeters from body (user chose on Match screen)
+  auth middleware extends expiresAt on every request
 end note
 
 API -> DB : User.findById + UserPreference.findOne
@@ -214,20 +190,20 @@ alt Duplicate request exists
 else No duplicate
   API -> Match : determine maxDistance
   alt locationSource = "gps"
-    Match -> Match : maxDistance = <color:#27AE60>preferredMaxDistanceMeters</color>
+    Match -> Match : maxDistance = <color:#27AE60>req.body.maxDistanceMeters\nor preferredMaxDistanceMeters</color>
   else locationSource = "ip"
-    Match -> Match : maxDistance = <color:#E67E22>GEOIP_DEFAULT_RADIUS_METERS</color>
+    Match -> Match : maxDistance = <color:#E67E22>GEOIP_DEFAULT_RADIUS_METERS (fixed)</color>
   end
 
   API -> DB : MatchRequest.create\n{ status: "searching",\n  expiresAt: now + MATCH_REQUEST_TTL_MS }
-  note right of DB
-    TTL from .env: MATCH_REQUEST_TTL_MS
-    Expiry job monitors this field
+
+  API -> Match : $nearSphere geo query → filter in JS\n(same mode, not blocked, within maxDistance)
+  note right of Match
+    $nearSphere + $ne incompatible in MongoDB
+    Fetch up to 20 nearby → filter self + blocked in JS
   end note
 
-  API -> Match : $nearSphere query\n(same mode, not blocked, within maxDistance)
-
-  alt ✅ Candidate FOUND (Client B was waiting)
+  alt ✅ Candidate FOUND
     Match -> DB : ChatSession.create({ participants, mode })
     Match -> DB : MatchRequest ×2 → <color:#27AE60>"matched"</color>
     Match -> DB : User ×2 → <color:#8E44AD>"in_call"</color>
@@ -236,8 +212,8 @@ else No duplicate
     Socket --> ClientB : <color:#27AE60>match-found</color>\n{ sessionId, mode, matchedWith }
     note right
       🎉 Waiting user notified via socket
-      mode=video → navigate /call/:id
-      mode=text  → navigate /chat/:id
+      mode=video → /call/:id
+      mode=text  → /chat/:id
     end note
     API --> ClientA : <color:#27AE60>201</color> { session, matchRequest }
 
@@ -258,13 +234,14 @@ end
 note over Job
   Runs every MATCH_EXPIRY_INTERVAL_MS (from .env)
   Started after DB connects, stopped cleanly on SIGINT/SIGTERM
+  User may already be deleted by MongoDB TTL — errors ignored
 end note
 
 Job -> DB : MatchRequest.find\n{ status:"searching", expiresAt < now }
 
 alt Expired requests found
   Job -> DB : MatchRequest.updateMany → <color:#C0392B>"expired"</color>
-  Job -> DB : User.updateMany → status: <color:#16A085>"online"</color>
+  Job -> DB : User.updateMany → status: <color:#16A085>"online"</color> (if still exists)
   Job -> Socket : registry.getSocket(userId) per expired user
   Socket --> ClientA : <color:#C0392B>match-expired</color>\n{ message: "No match found. Try again." }
 else Nothing expired
@@ -272,7 +249,7 @@ else Nothing expired
 end
 
 ' ═══════════════════════════════════════════════════════
-== 🟣 STEP 6 — Video Session (WebRTC) ==
+== 🟣 STEP 4 — Video Session (WebRTC) ==
 ' ═══════════════════════════════════════════════════════
 
 ClientA -> Socket : emit("join-room", { sessionId })
@@ -281,8 +258,7 @@ ClientB -> Socket : emit("join-room", { sessionId })
 note right of Socket
   <color:#784212>Message limiter:</color>
   RATE_LIMIT_SOCKET_MSG_MAX / RATE_LIMIT_SOCKET_MSG_WINDOW_MS per userId
-  Applied via socket.use() — wraps ALL incoming events
-  userId from socket.data (JWT auth) — cannot be spoofed
+  WebRTC signalling events (offer/answer/ice-candidate) exempt from throttle
 end note
 
 Socket -> DB : ChatSession.findOne({ _id: sessionId, status:"active" })
@@ -292,8 +268,9 @@ Socket --> ClientA : <color:#27AE60>peer-joined</color> { userId: B }
 Socket --> ClientB : <color:#27AE60>peer-joined</color> { userId: A }
 
 note over ClientA, ClientB
-  Deterministic roles: smaller _id = offerer
+  Deterministic roles: smaller _id string = offerer
   Prevents both peers creating offers simultaneously
+  ICE uses TURN relay if direct P2P fails (Metered.ca)
 end note
 
 ClientA -> Socket : emit("offer", { sessionId, offer: SDP })
@@ -309,13 +286,14 @@ ClientB -> Socket : emit("ice-candidate", { sessionId, candidate })
 Socket --> ClientA : <color:#E67E22>ice-candidate</color> { candidate, fromUserId: B }
 
 note over ClientA, ClientB
-  🎥 P2P media stream established directly between browsers
-  Server only relayed SDP + ICE — no media passes through server
-  Text chat: emit("send-message") → relay → emit("receive-message")
+  🎥 P2P media — server only relays SDP + ICE
+  TURN relay used automatically if STUN fails (~15% of users)
+  Text chat: send-message → relay → receive-message
+  Typing: typing { isTyping } → peer-typing
 end note
 
 ' ═══════════════════════════════════════════════════════
-== 💬 STEP 6b — Text-Only Session ==
+== 💬 STEP 4b — Text-Only Session ==
 ' ═══════════════════════════════════════════════════════
 
 ClientA -> Socket : emit("join-room", { sessionId })
@@ -331,11 +309,8 @@ end note
 ClientA -> Socket : emit("send-message", { sessionId, text })
 Socket --> ClientB : <color:#2980B9>receive-message</color> { text, fromUserId: A, timestamp }
 
-ClientB -> Socket : emit("send-message", { sessionId, text })
-Socket --> ClientA : <color:#2980B9>receive-message</color> { text, fromUserId: B, timestamp }
-
 ' ═══════════════════════════════════════════════════════
-== 🟠 STEP 7 — End Session ==
+== 🟠 STEP 5 — End Session ==
 ' ═══════════════════════════════════════════════════════
 
 alt Skip ⏭ — auto-search next match
@@ -344,9 +319,8 @@ alt Skip ⏭ — auto-search next match
   Socket -> DB : User.updateMany → status: <color:#16A085>"online"</color>
   Socket --> ClientB : <color:#C0392B>peer-left</color>\n{ userId: A, endReason: "skipped" }
   note right
-    ClientA → /match?autostart=video|text
-    ClientB → /match?autostart=video|text
-    Both auto-search next match immediately
+    Both → /match?autostart=video|text
+    Auto-search next match immediately
   end note
 
 else End 📵 — go to ended screen
@@ -354,10 +328,6 @@ else End 📵 — go to ended screen
   API -> DB : ChatSession → status: <color:#C0392B>"ended"</color>
   API -> DB : User.updateMany → status: <color:#16A085>"online"</color>
   API --> ClientA : <color:#27AE60>200</color> { data: session }
-  note right
-    ClientA → /ended screen
-    ClientB receives peer-left → /match?autostart
-  end note
 
 else Abrupt disconnect (crash / close tab)
   Socket -> Socket : "disconnecting" event
@@ -366,20 +336,8 @@ else Abrupt disconnect (crash / close tab)
   Socket --> ClientB : <color:#C0392B>peer-left</color>\n{ userId: A, endReason: "disconnect" }
   note right
     Auto-end — no dangling "active" sessions
-    ClientB → /match?autostart
   end note
 end
-
-' ═══════════════════════════════════════════════════════
-== 🔴 STEP 8 — Save Recording (Optional) ==
-' ═══════════════════════════════════════════════════════
-
-ClientA -> API : POST /api/recordings\n{ chatSessionId, provider: "aws_s3",\n  bucketName, objectKey, fileUrl }
-API -> DB : ChatSession.findById (validate exists)
-API -> DB : CallRecording.create(...)
-API -> DB : ChatSession → $addToSet recordings
-DB --> API : recording doc
-API --> ClientA : <color:#27AE60>201</color> { data: recording }
 
 ' ═══════════════════════════════════════════════════════
 == ⚡ QUICK REFERENCE ==
@@ -387,14 +345,12 @@ API --> ClientA : <color:#27AE60>201</color> { data: recording }
 
 note over ClientA, Job
   <color:#C0392B>AUTH (public — authLimiter)</color>
-  POST   /api/users/auth/register       → register + JWT pair
-  POST   /api/users/auth/login          → login + JWT pair
-  POST   /api/users/auth/refresh        → rotate tokens
-  POST   /api/users/auth/logout         → revoke [protected]
+  GET    /api/users/check/:username     → { available, suggestions? }
+  POST   /api/users/auth/register       → { data: user, accessToken }
+  No login / No refresh / No logout — username sessions are temporary
 
-  <color:#16A085>USERS (protected)</color>
+  <color:#16A085>USERS (protected — keep-alive extends expiresAt)</color>
   GET    /api/users/me                  → own profile
-  PATCH  /api/users/me                  → update profile (displayName, avatarUrl, languages)
   PATCH  /api/users/me/location         → update location
   PATCH  /api/users/me/status           → online / offline
   DELETE /api/users/me                  → delete account
@@ -406,7 +362,7 @@ note over ClientA, Job
   DELETE /api/users/block/:userId       → unblock user
 
   <color:#C0392B>MATCHING (protected — matchLimiter + cooldownGuard)</color>
-  POST   /api/match-requests            → enter queue
+  POST   /api/match-requests            → { mode, maxDistanceMeters? }
   GET    /api/match-requests/:id        → poll status
   DELETE /api/match-requests/:id        → cancel search
 
@@ -414,7 +370,7 @@ note over ClientA, Job
   GET    /api/sessions/:id              → session details
   PATCH  /api/sessions/:id/end          → end session
 
-  <color:#E67E22>RECORDINGS (protected)</color>
+  <color:#E67E22>RECORDINGS (protected — future feature)</color>
   POST   /api/recordings                → save metadata
   GET    /api/recordings/:id            → single recording
   GET    /api/recordings/user/:userId   → by user
@@ -431,7 +387,7 @@ note over ClientA, Job
   typing          { sessionId, isTyping }    → typing indicator
 
   <color:#1A5276>SOCKET EVENTS (server → client)</color>
-  ice-config      { iceServers }             → STUN config on connect
+  ice-config      { iceServers }             → STUN+TURN config on connect
   match-found     { sessionId, mode }        → match ready
   match-expired   { message }                → no match, retry
   peer-joined     { userId }                 → other peer ready
@@ -446,7 +402,13 @@ note over ClientA, Job
   matchLimiter          15 req / 1 min   per userId
   matchCooldownGuard     2 sec cooldown  per userId
   socketConnLimiter      5 conn / 1 min  per IP
-  socketMsgLimiter      10 msg / 1 sec   per userId
+  socketMsgLimiter      10 msg / 1 sec   per userId (signalling exempt)
+
+  <color:#6C3483>SESSION TTL (from .env)</color>
+  SESSION_TTL_MS = 900000 (15 min)
+  Extended on every authenticated request (keep-alive)
+  MongoDB TTL index auto-deletes expired users
+  Username freed after expiry — anyone can claim it
 end note
 
 @enduml

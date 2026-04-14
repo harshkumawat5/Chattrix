@@ -47,14 +47,14 @@ Chattrix/
 | 💬 **Text Chat** | Anonymous text-only chat, no camera needed |
 | 📍 **Proximity Matching** | GPS or IP-based location — match nearby strangers |
 | ⚡ **Instant Matching** | Matched in seconds, skip anytime for next match |
-| 🔐 **JWT Auth** | Access + refresh token rotation, auto-refresh on expiry |
+| 🔐 **Username Sessions** | Pick a username, chat for 15 min, no sign-up needed |
 | 🛡 **Rate Limiting** | Per-IP and per-user limits on all sensitive routes |
 | 🔄 **Auto-search** | Skip → instantly searches for next match |
-| 👤 **Profile** | Edit displayName, avatar, languages after register |
-| 🚫 **Block User** | Block strangers from future matches |
+| 👤 **Block User** | Block strangers from future matches |
 | ••• **Typing Indicator** | See when your chat partner is typing |
 | 🟢 **Connection Quality** | Live RTT-based signal strength indicator |
 | 🔄 **Auto-reconnect** | WebRTC ICE restart on call drop |
+| 🌐 **TURN Server** | Metered.ca TURN relay for users behind strict NAT |
 
 ---
 
@@ -114,11 +114,10 @@ cp apps/client/.env.example apps/client/.env
 |-----|---------|-------------|
 | `PORT` | `3000` | Server port |
 | `MONGODB_URI` | `mongodb://127.0.0.1:27017/chattrix` | MongoDB connection |
-| `CLIENT_ORIGIN` | `http://localhost:5173` | CORS allowed origin |
+| `CLIENT_ORIGIN` | `http://localhost:5173` | CORS allowed origin (comma-separated for multiple) |
 | `JWT_SECRET` | — | ⚠️ Change in production |
 | `JWT_EXPIRES_IN` | `15m` | Access token TTL |
-| `JWT_REFRESH_SECRET` | — | ⚠️ Change in production |
-| `JWT_REFRESH_EXPIRES_IN` | `7d` | Refresh token TTL |
+| `SESSION_TTL_MS` | `900000` | Username session duration (15 min). MongoDB TTL auto-deletes user after idle. |
 | `RATE_LIMIT_API_MAX` | `400` | API requests / 15 min / IP |
 | `RATE_LIMIT_AUTH_MAX` | `10` | Auth requests / 15 min / IP |
 | `RATE_LIMIT_MATCH_MAX` | `15` | Match requests / 1 min / userId |
@@ -129,18 +128,9 @@ cp apps/client/.env.example apps/client/.env
 | `MATCH_REQUEST_TTL_MS` | `120000` | Match request expiry (2 min) |
 | `MATCH_EXPIRY_INTERVAL_MS` | `30000` | Expiry job interval (30 sec) |
 | `STUN_SERVERS` | `stun:stun.l.google.com:19302,...` | Comma-separated STUN URLs |
-| `TURN_SERVERS` | — | Comma-separated TURN URLs (recommended for NAT traversal) |
-| `TURN_USERNAME` | — | TURN auth username |
-| `TURN_CREDENTIAL` | — | TURN auth credential/password |
-| `RECORDING_PROVIDER` | `idrive_e2` | Recording storage provider label |
-| `RECORDING_S3_BUCKET` | — | S3 bucket name for call recordings |
-| `RECORDING_S3_REGION` | — | S3 region |
-| `RECORDING_S3_ACCESS_KEY_ID` | — | S3 access key |
-| `RECORDING_S3_SECRET_ACCESS_KEY` | — | S3 secret key |
-| `RECORDING_S3_ENDPOINT` | — | Optional S3-compatible endpoint (IDrive E2/R2/MinIO) |
-| `RECORDING_S3_FORCE_PATH_STYLE` | `true` | Set `true` for path-style S3 providers |
-| `RECORDING_PUBLIC_BASE_URL` | — | Optional public base URL for stored objects |
-| `RECORDING_UPLOAD_EXPIRES_SECONDS` | `900` | Presigned upload URL expiry |
+| `METERED_APP_NAME` | — | Metered.ca app name for TURN |
+| `METERED_API_KEY` | — | Metered.ca API key (server only, never sent to client) |
+| `RECORDING_*` | — | S3-compatible storage (future feature) |
 
 **Client `.env` keys:**
 
@@ -178,19 +168,21 @@ cd apps/client && npm run dev   # Terminal 2 — frontend
 ## 🗺 User Flow
 
 ```
-Register / Login
+Visit app → enter username (live availability check)
   ↓
-Set Preferences (distance, mode)
+Username claimed → JWT issued (15 min session)
   ↓
-Match Screen — pick 📹 Video or 💬 Text
+Match Screen — pick 📹 Video or 💬 Text + distance
   ↓
 Matched instantly or wait (socket push)
   ↓
 Video Call (/call/:id)     Text Chat (/chat/:id)
-  WebRTC P2P                 Socket relay only
+  WebRTC P2P + TURN          Socket relay only
   + text chat panel          no camera needed
   ↓                          ↓
 Skip → auto-search next    End → /ended screen
+  ↓
+15 min idle → session expires → username freed
 ```
 
 ---
@@ -219,7 +211,7 @@ Skip → auto-search next    End → /ended screen
 | `createdAt` | Date | auto | |
 | `updatedAt` | Date | auto | |
 
-**Indexes:** `location` (2dsphere), `status + isDiscoverable`, `username`, `expiresAt` (TTL)
+**Indexes:** `location` (2dsphere), `status + isDiscoverable`, `username` (unique), `expiresAt` (TTL)
 
 > `refreshToken` and `email` removed. Auth is username-only with 15-min session TTL.
 
@@ -240,7 +232,7 @@ Skip → auto-search next    End → /ended screen
 | `createdAt` | Date | auto | |
 | `updatedAt` | Date | auto | |
 
-> Auto-created (upsert) on user registration. Validation: `min <= max` distance.
+> Auto-created (upsert) on user registration. `maxDistanceMeters` overridden by match request body.
 
 </details>
 
@@ -253,7 +245,7 @@ Skip → auto-search next    End → /ended screen
 | `user` | ObjectId | ✅ | ref: User |
 | `mode` | String | ✅ | enum: `"video"` \| `"text"` ← **audio removed** |
 | `minDistanceMeters` | Number | ❌ | min 0, default `0` |
-| `maxDistanceMeters` | Number | ✅ | min 100 |
+| `maxDistanceMeters` | Number | ✅ | min 100 — from request body |
 | `locationSnapshot` | GeoPoint | ✅ | snapshot at request time |
 | `status` | String | ❌ | enum: `"searching"` \| `"matched"` \| `"cancelled"` \| `"expired"` |
 | `requestedAt` | Date | ❌ | default `now` |
@@ -302,19 +294,12 @@ Skip → auto-search next    End → /ended screen
 | `bucketName` | String | ✅ | |
 | `objectKey` | String | ✅ | |
 | `fileUrl` | String | ✅ | |
-| `region` | String | ❌ | default `null` |
-| `mimeType` | String | ❌ | default `"video/webm"` |
-| `sizeBytes` | Number | ❌ | default `0` |
-| `durationSeconds` | Number | ❌ | default `0` |
-| `startedAt` | Date | ❌ | default `null` |
-| `endedAt` | Date | ❌ | default `null` |
 | `status` | String | ❌ | enum: `"uploading"` \| `"available"` \| `"failed"` \| `"deleted"` |
-| `uploadError` | String | ❌ | default `null` |
-| `metadata` | Map\<String,String\> | ❌ | default `{}` |
-| `expiresAt` | Date | ❌ | default `null` |
 | `createdAt` | Date | auto | |
 
 **Unique:** `provider + bucketName + objectKey`
+
+> 🚧 Recording upload not yet implemented — model and API endpoints exist for future use.
 
 </details>
 
@@ -338,6 +323,8 @@ Skip → auto-search next    End → /ended screen
 
 **On page load:** `main.jsx` checks JWT expiry → if expired `clearAuth()` → else `connectSocket(accessToken)`
 
+> No `refreshToken` — sessions are temporary by design.
+
 </details>
 
 <details>
@@ -345,7 +332,7 @@ Skip → auto-search next    End → /ended screen
 
 - Base URL: `VITE_API_URL` (from `.env`)
 - All requests: `Authorization: Bearer <accessToken>`
-- **Auto-refresh on 401:** → `POST /api/users/auth/refresh` → update store → retry original request → if refresh fails → `clearAuth()` → redirect `/login`
+- **On 401:** → `clearAuth()` → redirect `/` (no refresh attempt — session expired, user must re-enter username)
 - **409 handling:** throws `err` with `err.status=409`, `err.data=existing resource` → caller uses `err.data._id` to cancel stale request
 
 </details>
@@ -371,15 +358,14 @@ Skip → auto-search next    End → /ended screen
 | Route | Page | Access | Notes |
 |-------|------|--------|-------|
 | `/` | Landing | Public | Username entry screen |
-| `/preferences` | Preferences | 🔒 Guard | Distance slider + mode |
-| `/match` | Match | 🔒 Guard | Mode cards + find match |
+| `/match` | Match | 🔒 Guard | Mode cards + distance + find match |
 | `/call/:sessionId` | Call | 🔒 Guard | WebRTC video session |
 | `/chat/:sessionId` | Chat | 🔒 Guard | Text-only session |
 | `/ended` | Ended | 🔒 Guard | Session ended screen |
 
 > **Guard:** no `accessToken` or expired token → redirect `/`
 
-> **Guard:** no `accessToken` → redirect `/login`
+> No `/login`, `/register`, `/preferences`, `/profile` pages.
 
 </details>
 
@@ -395,6 +381,8 @@ Skip → auto-search next    End → /ended screen
 | `match-found` with `mode=video` | `/call/:sessionId` |
 | `match-found` with `mode=text` | `/chat/:sessionId` |
 | `?autostart` param on Match | auto-triggers `doSearch(mode)` after 300ms |
+| 401 response | `/` (username screen) |
+| Token expired on load | `/` (username screen) |
 
 </details>
 
@@ -422,7 +410,7 @@ Skip → auto-search next    End → /ended screen
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `ice-config` | `{ iceServers }` | STUN config on connect |
+| `ice-config` | `{ iceServers }` | STUN + TURN config on connect (from Metered.ca) |
 | `match-found` | `{ sessionId, mode }` | Match ready — navigate to session |
 | `match-expired` | `{ message }` | No match found — retry |
 | `peer-joined` | `{ userId }` | Other peer entered room |
@@ -445,6 +433,8 @@ Skip → auto-search next    End → /ended screen
 | `GET` | `/api/users/check/:username` | — | `{ available: bool, suggestions? }` |
 | `POST` | `/api/users/auth/register` | `{ username, location? }` | `201 { data: user, accessToken }` |
 
+> No login, refresh, or logout endpoints — sessions are temporary (15 min TTL).
+
 </details>
 
 <details>
@@ -453,7 +443,6 @@ Skip → auto-search next    End → /ended screen
 | Method | Endpoint | Body | Response |
 |--------|----------|------|----------|
 | `GET` | `/api/users/me` | — | own profile |
-| `PATCH` | `/api/users/me` | `{ displayName?, avatarUrl?, languages? }` | updated user |
 | `PATCH` | `/api/users/me/location` | `{ coordinates? }` | updated user |
 | `PATCH` | `/api/users/me/status` | `{ status }` | updated user |
 | `DELETE` | `/api/users/me` | — | deletes user + preferences |
@@ -471,7 +460,7 @@ Skip → auto-search next    End → /ended screen
 
 | Method | Endpoint | Body | Response |
 |--------|----------|------|----------|
-| `POST` | `/api/match-requests` | `{ mode: "video"\|"text" }` | `201 matched` / `202 searching` / `409 duplicate` |
+| `POST` | `/api/match-requests` | `{ mode: "video"\|"text", maxDistanceMeters? }` | `201 matched` / `202 searching` / `409 duplicate` |
 | `GET` | `/api/match-requests/:id` | — | match request status |
 | `DELETE` | `/api/match-requests/:id` | — | cancelled |
 
@@ -488,12 +477,10 @@ Skip → auto-search next    End → /ended screen
 </details>
 
 <details>
-<summary><strong>Recordings</strong> — protected</summary>
+<summary><strong>Recordings</strong> — protected (future feature)</summary>
 
 | Method | Endpoint | Body | Response |
 |--------|----------|------|----------|
-| `POST` | `/api/recordings/presign` | `{ chatSessionId, mimeType?, extension? }` | presigned upload URL |
-| `POST` | `/api/recordings/finalize` | `{ chatSessionId, provider, bucketName, objectKey, fileUrl, ... }` | `201 recording` |
 | `POST` | `/api/recordings` | `{ chatSessionId, ownerUserId, provider, bucketName, objectKey, fileUrl, ... }` | `201 recording` |
 | `GET` | `/api/recordings/:id` | — | single recording |
 | `GET` | `/api/recordings/user/:userId` | — | recordings by user |

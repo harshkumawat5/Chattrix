@@ -55,117 +55,113 @@ participant "🔌 socket.js"        as Socket  #1A5276
 participant "🌐 Backend"          as Backend #C0392B
 
 ' ═══════════════════════════════════════════════════════
-== 🟢 STEP 1 — Landing Page ==
+== 🟢 STEP 1 — Landing (Username Entry) ==
 ' ═══════════════════════════════════════════════════════
 
-User -> UI : visits http://localhost:5173
+User -> UI : visits app
 
 UI -> Store : read accessToken
+note right of Store
+  Persisted in localStorage via zustand/persist
+  key: "chattrix-auth"
+end note
 
-alt User not logged in
-  UI --> User : show hero\n"Create account →"  "Log in"
-  note right of UI
-    Guest sees: Create account + Log in buttons
-    No auth state in localStorage
-  end note
-else User logged in
-  UI --> User : show hero\n"Start chatting →"  "Log out"
-  note right of UI
-    Token persisted in localStorage via zustand/persist
-    main.jsx auto-calls connectSocket(accessToken) on load
-  end note
+alt Token exists in localStorage
+  UI -> UI : decode JWT → check exp timestamp
+  alt Token expired
+    UI -> Store : clearAuth()
+    UI --> User : show username entry screen
+  else Token still valid
+    UI -> Socket : connectSocket(accessToken)
+    UI --> User : navigate → /match (auto-login)
+    note right of UI
+      main.jsx checks expiry on every page load
+      No server call needed — JWT is self-contained
+    end note
+  end
+else No token
+  UI --> User : show username entry screen
 end
 
 ' ═══════════════════════════════════════════════════════
-== 🔐 STEP 2 — Register ==
+== 🔐 STEP 2 — Username Claim ==
 ' ═══════════════════════════════════════════════════════
 
-User -> UI : fills displayName, email (optional)\ntoggle GPS or use IP
+User -> UI : types username (live check as they type)
+
+UI -> API : GET /api/users/check/:username (debounced 400ms)
+note right of API
+  No auth needed — public endpoint
+  Validates: 3-20 chars, [a-z0-9_] only
+end note
+
+alt Username taken
+  Backend --> API : { available: false, suggestions: ["alex_99",...] }
+  API --> UI : response
+  UI --> User : ❌ show suggestion pills
+  User -> UI : clicks suggestion pill → fills input
+else Username available
+  Backend --> API : { available: true }
+  API --> UI : response
+  UI --> User : ✅ "Get started →" button enabled
+end
+
+User -> UI : toggles GPS (optional) + clicks "Get started →"
 
 alt GPS toggle ON
   UI -> UI : navigator.geolocation.getCurrentPosition()
   UI --> User : browser asks location permission
-  note right
-    GPS ON → sends coordinates to backend
-    locationSource = "gps"
-    Better match accuracy
-  end note
-else GPS toggle OFF
-  note right of UI
-    No coordinates sent
-    Backend resolves from client IP
-    locationSource = "ip"
-    City-level accuracy, no permission needed
-  end note
 end
 
-UI -> API : POST /api/users/auth/register\n{ displayName, email, location? }
-API -> Backend : fetch request + Bearer token (none yet)
-Backend --> API : 201 { user, accessToken, refreshToken }
-API --> UI : response data
+UI -> API : POST /api/users/auth/register\n{ username, location? }
+Backend --> API : 201 { data: user, accessToken }
+API --> UI : response
 
-UI -> Store : setAuth(user, accessToken, refreshToken)
+UI -> Store : setAuth(user, accessToken)
 note right of Store
-  Persisted to localStorage
-  Survives page refresh
+  No refreshToken — sessions are temporary
+  accessToken expires in SESSION_TTL_MS (15 min)
+  Extended on every API call (keep-alive)
 end note
 
 UI -> Socket : connectSocket(accessToken)
 note right of Socket
-  Creates singleton io() connection
+  Singleton — never replaced once created
   auth: { token: "Bearer <accessToken>" }
-  Caches match-found + peer-left events globally
+  Backend fetches TURN credentials from Metered.ca
+  Caches pendingMatchFound + pendingPeerLeft globally
 end note
 
 Socket -> Backend : WebSocket handshake
-Backend --> Socket : ice-config { iceServers }
-UI --> User : navigate → /preferences
-
-' ═══════════════════════════════════════════════════════
-== 🔑 STEP 3 — Login (Returning User) ==
-' ═══════════════════════════════════════════════════════
-
-User -> UI : enters email
-UI -> API : POST /api/users/auth/login { email }
-API -> Backend : fetch
-Backend --> API : 200 { user, accessToken, refreshToken }
-UI -> Store : setAuth(user, accessToken, refreshToken)
-UI -> Socket : connectSocket(accessToken)
-UI --> User : navigate → /match
-
-note over User, Backend
-  On page refresh: main.jsx reads token from Store → connectSocket() auto-reconnects
-  On 401: api.js intercepts → POST /auth/refresh → retry original request
-  On refresh fail: clearAuth() → redirect /login
+Backend --> Socket : ice-config { iceServers: [STUN + TURN] }
+note right of Socket
+  TURN credentials from Metered.ca (server-side fetch)
+  API key never sent to client
+  Cached 12h on server
 end note
 
-' ═══════════════════════════════════════════════════════
-== ⚙️ STEP 4 — Preferences ==
-' ═══════════════════════════════════════════════════════
-
-User -> UI : selects distance slider + mode (video/both)
-UI -> API : PUT /api/users/me/preferences\n{ preferredMaxDistanceMeters, preferredMode }
-note right of API
-  Bearer token from Store.accessToken
-  userId from JWT — never from form
-end note
-API -> Backend : fetch
-Backend --> API : 200 { data: preferences }
 UI --> User : navigate → /match
 
 ' ═══════════════════════════════════════════════════════
-== 🎯 STEP 5 — Match Screen ==
+== 🎯 STEP 3 — Match Screen ==
 ' ═══════════════════════════════════════════════════════
 
-UI --> User : show mode cards\n📹 Video Chat  |  💬 Text Chat
-User -> UI : selects mode + clicks "Find a match →"
+UI --> User : show @username in nav\nmode cards + distance selector
 
-UI -> API : POST /api/match-requests { mode: "video"|"text" }
+note right of UI
+  No separate preferences page
+  Distance selector inline on Match screen
+  GPS users: 4 options (Nearby/Neighborhood/City/Anywhere)
+  IP users: fixed city-level note shown instead
+end note
+
+User -> UI : selects mode (📹 Video | 💬 Text)\n+ distance (GPS users only)\n+ clicks "Find a match →"
+
+UI -> API : POST /api/match-requests\n{ mode: "video"|"text", maxDistanceMeters }
 API -> Backend : fetch
 
 alt 201 — instant match
   Backend --> API : { session, matchRequest }
-  API --> UI : response
   alt mode = "video"
     UI --> User : navigate → /call/:sessionId
   else mode = "text"
@@ -174,17 +170,18 @@ alt 201 — instant match
 
 else 202 — searching
   Backend --> API : { matchRequest }
-  API --> UI : response
-  UI --> User : show pulse animation "Looking nearby..."
+  UI --> User : pulse animation "Looking nearby..."
   note right of UI
     Two parallel fallbacks:
     1. socket "match-found" event (instant)
     2. poll GET /api/match-requests/:id every 2s
+    Cancel button stops polling + cancels request
   end note
 
   Socket -> UI : match-found { sessionId, mode }
   note right of Socket
-    Cached at socket.js level — never missed
+    Cached at socket.js level (pendingMatchFound)
+    Checked on Match mount — never missed
     even with React StrictMode double-invoke
   end note
   alt mode = "video"
@@ -197,103 +194,86 @@ else 409 — stale request
   Backend --> API : { data: existingRequest }
   API --> UI : err.status=409, err.data._id
   UI -> API : DELETE /api/match-requests/:id (cancel stale)
-  UI -> API : POST /api/match-requests { mode } (retry)
+  UI -> API : POST /api/match-requests { mode, maxDistanceMeters } (retry)
   UI --> User : searching...
 end
 
 ' ═══════════════════════════════════════════════════════
-== 📹 STEP 6a — Video Call (/call/:sessionId) ==
+== 📹 STEP 4a — Video Call (/call/:sessionId) ==
 ' ═══════════════════════════════════════════════════════
 
 UI -> UI : check pendingPeerLeft → /match?autostart if set
 UI -> UI : getUserMedia({ video, audio })
 UI --> User : local video preview (mirrored PiP)
 UI -> UI : new RTCPeerConnection({ iceServers })
+note right of UI
+  iceServers from socket ice-config event
+  Includes TURN credentials from Metered.ca
+  TURN used automatically if STUN P2P fails
+end note
 UI -> Socket : emit("join-room", { sessionId })
 
 Socket -> Backend : join-room
 Backend --> Socket : peer-joined { userId: otherId } to BOTH peers
 
 note over UI, Backend
-  Deterministic offerer role:
-  myUserId < otherId → I create the offer
-  myUserId > otherId → I wait for offer
+  Deterministic offerer: myUserId < otherId → I create offer
   Prevents both peers creating offers simultaneously
+  cancelled flag prevents stale async callbacks (StrictMode safe)
 end note
 
 alt I am offerer
   UI -> Socket : emit("offer", { sessionId, offer })
-  Socket -> Backend : relay
-  Backend --> Socket : relay to other peer
   Socket -> UI : answer { answer }
   UI -> UI : setRemoteDescription(answer)
 else I am answerer
   Socket -> UI : offer { offer }
-  UI -> UI : setRemoteDescription(offer)\ncreateAnswer()
+  UI -> UI : setRemoteDescription(offer) → createAnswer()
   UI -> Socket : emit("answer", { sessionId, answer })
 end
 
 UI -> Socket : emit("ice-candidate", ...) [multiple]
-Socket -> Backend : relay to other peer
-
-UI --> User : 🎥 remote video appears\n"Connecting..." → connected
+UI --> User : 🎥 remote video appears → connected
 
 note right of UI
-  Text chat panel (💬 button):
-  send-message → socket relay → receive-message
+  Text chat panel (💬 button) — slides up on mobile, right on desktop
   Typing indicator: emit typing → peer-typing → bouncing dots
-  Unread badge when panel closed
-  In-memory only — cleared on session end
-  --
-  Connection quality (🟢🟡🔴):
-  pc.getStats() polled every 3s
-  RTT < 100ms=good, < 300ms=fair, > 300ms=poor
-  --
-  Auto-reconnect on ICE drop:
-  pc.oniceconnectionstatechange → disconnected/failed
-  → createOffer({ iceRestart: true }) after 2s
-  --
-  Block user (🚫 button):
-  POST /api/users/block/:userId
-  Blocked users excluded from future matches
+  Connection quality: pc.getStats() every 3s → 🟢🟡🔴
+  Auto-reconnect: ICE drop → createOffer({ iceRestart: true })
+  Block user: 🚫 → POST /api/users/block/:userId
+  Session poll every 3s → /match?autostart if ended
 end note
 
 ' ═══════════════════════════════════════════════════════
-== 💬 STEP 6b — Text Chat (/chat/:sessionId) ==
+== 💬 STEP 4b — Text Chat (/chat/:sessionId) ==
 ' ═══════════════════════════════════════════════════════
 
 UI -> UI : check pendingPeerLeft → /match?autostart if set
 UI -> Socket : emit("join-room", { sessionId })
 note right of UI
   No getUserMedia — no camera/mic
-  No RTCPeerConnection — no WebRTC
+  No RTCPeerConnection — no WebRTC at all
   Pure socket messaging only
 end note
 
 Socket -> Backend : join-room
 Backend --> Socket : peer-joined to both
 
-UI --> User : status dot: 🟠 waiting → 🟢 connected
-note right of UI
-  Fallback: setTimeout 2s → setConnected(true)
-  in case peer-joined fires on other peer only
-end note
+UI --> User : 🟠 waiting → 🟢 connected (or 2s fallback timer)
 
-User -> UI : types message + sends
+User -> UI : types + sends message
 UI -> Socket : emit("send-message", { sessionId, text })
 Socket -> Backend : relay
 Backend --> Socket : receive-message to other peer
-UI --> User : message bubble (mine=right, theirs=left)
+UI --> User : bubble (mine=right/purple, theirs=left/dark)
 
 note right of UI
-  Typing indicator:
-  emit typing { isTyping: true } on keystroke
-  emit typing { isTyping: false } after 1.5s idle
-  peer-typing → bouncing dots shown
+  Typing indicator: emit typing → peer-typing → dots
+  Session poll every 3s → /match?autostart if ended
 end note
 
 ' ═══════════════════════════════════════════════════════
-== 🔚 STEP 7 — End / Skip ==
+== 🔚 STEP 5 — End / Skip / Session Expiry ==
 ' ═══════════════════════════════════════════════════════
 
 alt Skip ⏭ — find next match
@@ -302,8 +282,7 @@ alt Skip ⏭ — find next match
   UI -> Backend : PATCH /api/sessions/:id/end { endReason: "skipped" }
   UI --> User : navigate → /match?autostart=video|text
   note right
-    Match page reads ?autostart param
-    Auto-triggers doSearch(mode) after 300ms
+    Match page reads ?autostart → auto-triggers doSearch(mode)
     Seamless next-match experience
   end note
 
@@ -313,9 +292,8 @@ else End 📵 — go to ended screen
   UI -> Backend : PATCH /api/sessions/:id/end { endReason: "completed" }
   UI --> User : navigate → /ended
   note right
-    /ended shows "That's a wrap 👋"
-    "Chat again" → /match
-    "Go home" → /
+    /ended: "That's a wrap 👋"
+    "Chat again" → /match | "Go home" → /
   end note
 
 else Peer left / disconnected
@@ -326,29 +304,22 @@ else Peer left / disconnected
     Fallback: poll /api/sessions/:id every 3s
   end note
   UI --> User : navigate → /match?autostart=video|text
+
+else Session token expires (15 min idle)
+  UI -> API : any request → 401
+  note right of API
+    No refresh token — session is gone
+    User must re-enter username
+  end note
+  API --> UI : 401
+  UI -> Store : clearAuth()
+  UI -> Socket : disconnectSocket()
+  UI --> User : navigate → / (username screen)
+  note right
+    Username freed in MongoDB after SESSION_TTL_MS
+    Anyone can claim it after expiry
+  end note
 end
-
-' ═══════════════════════════════════════════════════════
-== 🚪 STEP 8 — Logout ==
-' ═══════════════════════════════════════════════════════
-
-User -> UI : clicks "Log out" (Landing or Match nav)
-UI -> API : POST /api/users/auth/logout [auth]
-API -> Backend : fetch
-Backend --> API : 200
-UI -> Socket : disconnectSocket()
-note right of Socket
-  socket.disconnect()
-  socket = null
-  pendingMatchFound = null
-  pendingPeerLeft = null
-end note
-UI -> Store : clearAuth()
-note right of Store
-  Clears localStorage
-  user = null, tokens = null
-end note
-UI --> User : navigate → /
 
 ' ═══════════════════════════════════════════════════════
 == ⚡ QUICK REFERENCE ==
@@ -356,22 +327,22 @@ UI --> User : navigate → /
 
 note over User, Backend
   <color:#16A085>PAGES & ROUTES</color>
-  /                  Landing     — hero, CTA, login/logout in nav
-  /register          Register    — displayName + email + GPS toggle
-  /login             Login       — email only
-  /preferences       Preferences — distance slider + mode (Guard)
-  /match             Match       — mode cards + find match (Guard)
-  /profile           Profile     — edit displayName, avatarUrl, languages (Guard)
+  /                  Landing     — username entry + GPS toggle (public)
+  /match             Match       — mode cards + distance + find match (Guard)
   /call/:sessionId   Call        — WebRTC video + text chat panel (Guard)
   /chat/:sessionId   Chat        — text-only fullscreen chat (Guard)
   /ended             Ended       — session ended screen (Guard)
 
+  No /login, /register, /preferences, /profile pages
+  Guard: no accessToken OR expired token → redirect /
+
   <color:#8E44AD>STATE (Zustand — persisted)</color>
-  user, accessToken, refreshToken
-  setAuth() / clearAuth()
+  user, accessToken
+  setAuth(user, accessToken) / clearAuth()
+  No refreshToken — sessions are temporary
 
   <color:#E67E22>API CLIENT (api.js)</color>
-  Auto-refresh on 401 → POST /auth/refresh → retry
+  401 → clearAuth() + redirect / (no refresh attempt)
   409 → err.status=409, err.data = existing resource
   All requests: Authorization: Bearer <token>
 
@@ -379,11 +350,11 @@ note over User, Backend
   Singleton — never replaced once created
   connectSocket(token) — returns existing if alive
   Caches: pendingMatchFound, pendingPeerLeft
-  On page refresh: main.jsx auto-reconnects
+  On page load: main.jsx checks JWT expiry → connect or clearAuth
 
   <color:#C0392B>GUARDS</color>
-  All /match /call /chat /preferences /ended routes
-  No accessToken → redirect /login
+  /match /call /chat /ended routes
+  No accessToken OR JWT expired → redirect /
 end note
 
 @enduml
