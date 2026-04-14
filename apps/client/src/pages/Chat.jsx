@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { getSocket, getPendingPeerLeft, clearPendingPeerLeft } from "../lib/socket";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
+import Icon from "../components/Icon";
 import "./Chat.css";
 
 export default function Chat() {
@@ -132,14 +133,17 @@ export default function Chat() {
       <div className="chat-page-bg" />
 
       <header className="chat-page-header">
-        <span className="logo">chattrix</span>
+        <div className="logo-wrap">
+          <img src="/android-chrome-192x192.png" alt="Chattrix" className="logo-img" />
+          <span className="logo">Chattrix</span>
+        </div>
         <div className="chat-page-status">
           <span className={`status-dot ${connected ? "online" : "waiting"}`} />
           <span>{connected ? `Connected · ${fmt(duration)}` : "Waiting for stranger..."}</span>
         </div>
         <div className="chat-page-actions">
-          <button className="btn btn-ghost btn-sm" onClick={() => end("skipped")}>Skip ⏭</button>
-          <button className="btn btn-danger btn-sm" onClick={() => end("completed")}>End 📵</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => end("skipped")}><Icon name="skipForward" size={16} /> Skip</button>
+          <button className="btn btn-danger btn-sm" onClick={() => end("completed")}><Icon name="phoneOff" size={16} /> End</button>
         </div>
       </header>
 
@@ -188,7 +192,7 @@ export default function Chat() {
           autoComplete="off"
         />
         <button type="submit" className="chat-page-send" disabled={!connected || !msgInput.trim()}>
-          ↑
+          <Icon name="chevronUp" size={18} />
         </button>
       </form>
     </div>

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { getSocket, getPendingPeerLeft, clearPendingPeerLeft } from "../lib/socket";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
+import Icon from "../components/Icon";
 import "./Call.css";
 
 export default function Call() {
@@ -626,7 +627,8 @@ export default function Call() {
     end("completed");
   };
 
-  const qualityIcon = { good: "🟢", fair: "🟡", poor: "🔴" };
+  const qualityColor = { good: "var(--green)", fair: "var(--orange)", poor: "var(--red)" };
+  const qualityLabel = { good: "Good", fair: "Fair", poor: "Poor" };
 
   return (
     <div className="call-page">
@@ -642,8 +644,9 @@ export default function Call() {
 
       {/* connection quality badge */}
       {connected && connQuality && (
-        <div className="conn-quality">
-          {qualityIcon[connQuality]} {connQuality}
+        <div className="conn-quality" style={{ color: qualityColor[connQuality] }}>
+          <span className="conn-dot" style={{ background: qualityColor[connQuality] }} />
+          {qualityLabel[connQuality]}
         </div>
       )}
 
@@ -703,7 +706,7 @@ export default function Call() {
               setMuted((v) => !v);
             }}
           >
-            {muted ? "🔇" : "🎙"}
+            <Icon name={muted ? "micOff" : "mic"} size={20} />
           </button>
 
           <button
@@ -715,7 +718,7 @@ export default function Call() {
               setCamOff((v) => !v);
             }}
           >
-            {camOff ? "📷" : "📹"}
+            <Icon name={camOff ? "videoOff" : "video"} size={20} />
           </button>
 
           <button
@@ -725,18 +728,18 @@ export default function Call() {
               setUnread(0);
             }}
           >
-            💬
+            <Icon name="messageCircle" size={20} />
             {unread > 0 && !chatOpen && <span className="unread-badge">{unread}</span>}
           </button>
 
           <button className="ctrl-btn block-btn" onClick={blockPeer} title="Block user">
-            🚫
+            <Icon name="ban" size={18} />
           </button>
           <button className="ctrl-btn skip" onClick={() => end("skipped")}>
-            ⏭
+            <Icon name="skipForward" size={20} />
           </button>
           <button className="ctrl-btn end" onClick={() => end("completed")}>
-            📵
+            <Icon name="endCall" size={20} />
           </button>
         </div>
       </div>

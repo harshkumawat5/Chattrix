@@ -141,7 +141,10 @@ export default function Match() {
       <div className="match-bg" />
 
       <nav className="match-nav">
-        <span className="logo">chattrix</span>
+        <div className="logo-wrap">
+          <img src="/android-chrome-192x192.png" alt="Chattrix" className="logo-img" />
+          <span className="logo">Chattrix</span>
+        </div>
         <span className="match-username">@{user?.username}</span>
       </nav>
 

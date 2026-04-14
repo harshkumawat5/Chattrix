@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
 import { connectSocket } from "../lib/socket";
+import Icon from "../components/Icon";
 import "./Landing.css";
 
 export default function Landing() {
@@ -88,10 +89,10 @@ export default function Landing() {
   };
 
   const statusIcon = {
-    checking:  <span className="username-status checking">⏳</span>,
-    available: <span className="username-status available">✅</span>,
-    taken:     <span className="username-status taken">❌</span>,
-    invalid:   <span className="username-status taken">⚠️</span>,
+    checking:  <Icon name="loader" size={18} className="spin" />,
+    available: <Icon name="checkCircle" size={18} color="var(--green)" />,
+    taken:     <Icon name="xCircle" size={18} color="var(--red)" />,
+    invalid:   <Icon name="alertTriangle" size={18} color="var(--orange)" />,
   };
 
   return (
@@ -99,7 +100,10 @@ export default function Landing() {
       <div className="landing-bg" />
 
       <nav className="landing-nav">
-        <span className="logo">chattrix</span>
+        <div className="logo-wrap">
+          <img src="/android-chrome-192x192.png" alt="Chattrix" className="logo-img" />
+          <span className="logo">Chattrix</span>
+        </div>
         <div className="badge">🌍 Proximity-based random chat</div>
       </nav>
 
@@ -163,7 +167,7 @@ export default function Landing() {
             disabled={status !== "available"}
             style={{ width: "100%" }}
           >
-            {status === "loading" ? "Entering..." : "Get started →"}
+            {status === "loading" ? "Entering..." : "Get started"}
           </button>
         </form>
 

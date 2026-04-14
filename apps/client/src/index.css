@@ -107,6 +107,8 @@ html, body, #root {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+.spin { animation: spin 1s linear infinite; }
 @keyframes gradient-shift {
   0%   { background-position: 0% 50%; }
   50%  { background-position: 100% 50%; }
@@ -114,3 +116,22 @@ html, body, #root {
 }
 
 .fade-up { animation: fadeUp 0.4s ease both; }
+
+/* brand logo */
+.logo-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo-img {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+@media (min-width: 400px) {
+  .logo-img { width: 32px; height: 32px; border-radius: 8px; }
+}

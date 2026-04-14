@@ -240,10 +240,9 @@
   width: 46px;
   height: 46px;
   border-radius: 50%;
-  border: 1px solid #ffffff18;
+  border: 1px solid #ffffff22;
   background: #ffffff18;
   backdrop-filter: blur(8px);
-  font-size: 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -252,13 +251,14 @@
   position: relative;
   flex-shrink: 0;
   -webkit-tap-highlight-color: transparent;
+  color: #fff;
 }
-.ctrl-btn:active { background: #ffffff33; transform: scale(0.95); }
-.ctrl-btn.active { background: #ffffff33; }
+.ctrl-btn:active { background: #ffffff33; transform: scale(0.93); }
+.ctrl-btn.active  { background: #ffffff33; border-color: #ffffff44; }
 
 @media (min-width: 400px) {
-  .ctrl-btn { width: 52px; height: 52px; font-size: 20px; }
-  .call-controls { gap: 12px; }
+  .ctrl-btn { width: 50px; height: 50px; }
+  .call-controls { gap: 10px; }
 }
 
 .ctrl-btn.chat-btn { font-size: 16px; }
@@ -280,33 +280,32 @@
 }
 
 .ctrl-btn.block-btn {
-  font-size: 16px;
-  background: #78421222;
-  border-color: #78421244;
+  background: rgba(120, 66, 18, 0.2);
+  border-color: rgba(120, 66, 18, 0.4);
 }
-.ctrl-btn.block-btn:active { background: #78421244; }
+.ctrl-btn.block-btn:active { background: rgba(120, 66, 18, 0.4); }
 
 .ctrl-btn.skip {
-  width: 52px;
-  height: 52px;
-  font-size: 20px;
-  background: #f9731622;
-  border-color: #f9731644;
+  width: 50px;
+  height: 50px;
+  background: rgba(249, 115, 22, 0.2);
+  border-color: rgba(249, 115, 22, 0.4);
+  color: #f97316;
 }
-.ctrl-btn.skip:active { background: #f9731644; }
+.ctrl-btn.skip:active { background: rgba(249, 115, 22, 0.4); }
 
 .ctrl-btn.end {
-  width: 52px;
-  height: 52px;
-  font-size: 20px;
-  background: #ef444422;
-  border-color: #ef444444;
+  width: 50px;
+  height: 50px;
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
 }
-.ctrl-btn.end:active { background: var(--red); }
+.ctrl-btn.end:active { background: #dc2626; transform: scale(0.93); }
 
 @media (min-width: 400px) {
   .ctrl-btn.skip,
-  .ctrl-btn.end { width: 60px; height: 60px; font-size: 22px; }
+  .ctrl-btn.end { width: 56px; height: 56px; }
 }
 
 /* connection quality badge */
@@ -317,14 +316,23 @@
   transform: translateX(-50%);
   background: #00000066;
   backdrop-filter: blur(8px);
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: 99px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: #fff;
   z-index: 10;
-  text-transform: capitalize;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* typing indicator dots */

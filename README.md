@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🌍 Chattrix
+<img src="apps/client/public/android-chrome-192x192.png" alt="Chattrix Logo" width="80" height="80" style="border-radius: 16px" />
+
+# Chattrix
 
 ### Proximity-based random video & text chat platform
 
