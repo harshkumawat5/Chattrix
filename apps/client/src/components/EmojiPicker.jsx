@@ -16,7 +16,6 @@ export default function EmojiPicker({ onSelect, onClose }) {
     return () => { clearTimeout(t); document.removeEventListener("mousedown", handler); };
   }, [onClose, isMobile]);
 
-  // fill full width on mobile
   const perLine = isMobile ? Math.floor((window.innerWidth - 8) / 40) : 9;
 
   return (
@@ -27,7 +26,10 @@ export default function EmojiPicker({ onSelect, onClose }) {
       <div ref={ref} className="emoji-picker-wrap">
         <Picker
           data={data}
-          onEmojiSelect={(e) => { onSelect(e.native); onClose(); }}
+          onEmojiSelect={(e) => {
+            // only insert emoji, do NOT close — user can pick multiple like WhatsApp
+            onSelect(e.native);
+          }}
           theme="auto"
           set="native"
           previewPosition="none"
