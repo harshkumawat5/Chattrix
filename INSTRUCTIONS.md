@@ -48,19 +48,24 @@ Rendered PNGs are in [`docs/lld_backend.png`](./docs/lld_backend.png) and [`docs
 | Mongoose 9.x `pre("validate")` hooks use **`throw`** not `next()` | `next` is not a function in Mongoose 9 |
 | `User.expiresAt` is extended on **every authenticated request** via `auth.middleware.js` | Keep-alive — 15 min idle = session expires |
 | `username` is **permanent** for the session — cannot be changed | It is the identity for that session |
+| `checkUsernameLimiter` is **separate** from `authLimiter` | Username check fires on every keystroke — needs 60/min not 10/15min |
+| `clearMatchCooldown(userId)` must be called on **cancel** | Prevents 429 on skip → autostart flow |
+| Skip/peer-left navigates with **`instant=1`** query param | Match page uses 50ms delay instead of 2500ms |
 
 ### Frontend
 
 | Rule | Why |
 |------|-----|
 | `socket.js` is a **singleton** — `connectSocket()` returns existing if alive | Never replace a connected socket |
-| `pendingMatchFound` and `pendingPeerLeft` are **cached at socket.js level** | Survive React StrictMode double-invoke |
+| `pendingMatchFound`, `pendingPeerLeft`, `pendingPeerJoined` cached at socket level | Survive React StrictMode double-invoke |
 | All socket handlers use **named function references** for `socket.off()` | `socket.off("event")` without ref removes ALL listeners |
 | `cancelled` flag in `useEffect` prevents **stale async callbacks** | Set to `true` in cleanup, checked before every state update |
 | WebRTC offerer is determined by **`myUserId < otherId`** (lexicographic) | Deterministic — prevents both peers creating offers |
 | ICE candidates are **queued** until `remoteDescription` is set | Prevents `addIceCandidate` errors |
 | On **401** — `clearAuth()` + redirect `/` | No refresh token — session expired, user must re-enter username |
+| On **429** — keep last known status, don't block UI | Username check 429 should not disable the Get Started button |
 | `main.jsx` checks JWT expiry on load — clears stale tokens | Prevents using expired token from localStorage |
+| Theme stored in `useThemeStore` — applied via `data-theme` on `<html>` | Never hardcode colors — use CSS variables |
 
 ---
 
@@ -111,7 +116,7 @@ Chattrix/
 │   │       ├── config/         ← db.js
 │   │       ├── controllers/    ← business logic
 │   │       ├── jobs/           ← matchExpiry.job.js
-│   │       ├── middlewares/    ← auth, rateLimiter
+│   │       ├── middlewares/    ← auth, rateLimiter (checkUsernameLimiter, clearMatchCooldown)
 │   │       ├── models/         ← Mongoose schemas
 │   │       ├── routes/         ← Express routers
 │   │       ├── socket/         ← Socket.io handlers + registry
@@ -120,11 +125,12 @@ Chattrix/
 │   │       └── server.js
 │   └── client/
 │       └── src/
-│           ├── lib/            ← api.js, socket.js
+│           ├── components/     ← Icon.jsx, EmojiPicker.jsx
+│           ├── lib/            ← api.js, socket.js (pendingPeerJoined cache)
 │           ├── pages/          ← React pages + CSS
-│           ├── store/          ← Zustand auth store
+│           ├── store/          ← auth.store.js, theme.store.js
 │           ├── App.jsx         ← router
-│           └── main.jsx        ← entry point
+│           └── main.jsx        ← entry point (theme init + JWT check)
 ├── docs/
 │   ├── lld_backend.uml / .png
 │   └── lld_frontend.uml / .png
@@ -177,3 +183,4 @@ Commit both the `.uml` source and the `.png` output together.
 | Recordings not implemented | Model + API exists, but no MediaRecorder or cloud storage yet |
 | Face detection not implemented | Planned future feature |
 | No email verification | Anyone can register with any email |
+| `matchCooldowns` Map is process-bound | Resets on server restart — use Redis for multi-instance |

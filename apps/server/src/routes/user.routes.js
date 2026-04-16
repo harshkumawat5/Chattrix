@@ -3,12 +3,12 @@ const { checkUsername, register, getUser, updateLocation, updateStatus, deleteUs
 const { getPreferences, updatePreferences } = require("../controllers/preference.controller");
 const { getUserSessions } = require("../controllers/session.controller");
 const { auth } = require("../middlewares/auth.middleware");
-const { authLimiter } = require("../middlewares/rateLimiter.middleware");
+const { authLimiter, checkUsernameLimiter } = require("../middlewares/rateLimiter.middleware");
 
 const router = express.Router();
 
 // ── Public ───────────────────────────────────────────────────────
-router.get("/check/:username",   authLimiter, checkUsername);
+router.get("/check/:username",   checkUsernameLimiter, checkUsername);
 router.post("/auth/register",    authLimiter, register);
 
 // ── Protected ────────────────────────────────────────────────────

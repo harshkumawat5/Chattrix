@@ -17,6 +17,15 @@ const authLimiter = rateLimit({
   message: { message: "Too many auth attempts, please try again later." },
 });
 
+// Username availability check — generous limit since it fires on every keystroke
+const checkUsernameLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_CHECK_MAX) || 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many checks, please slow down." },
+});
+
 const matchCooldowns = new Map();
 
 const matchLimiter = rateLimit({
@@ -46,4 +55,9 @@ const matchCooldownGuard = (req, res, next) => {
   return next();
 };
 
-module.exports = { apiLimiter, authLimiter, matchLimiter, matchCooldownGuard };
+// clear cooldown when user cancels — so skip → autostart doesn't hit 429
+const clearMatchCooldown = (userId) => {
+  if (userId) matchCooldowns.delete(userId.toString());
+};
+
+module.exports = { apiLimiter, authLimiter, checkUsernameLimiter, matchLimiter, matchCooldownGuard, clearMatchCooldown };

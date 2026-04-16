@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const { User, UserPreference, MatchRequest, ChatSession } = require("../models");
 const { getIpDefaultRadius } = require("../utils/geoip");
 const { getSocket } = require("../socket/registry");
+const { clearMatchCooldown } = require("../middlewares/rateLimiter.middleware");
 
 const createMatchRequest = async (req, res, next) => {
   try {
@@ -132,6 +133,7 @@ const cancelMatchRequest = async (req, res, next) => {
     if (!request) return res.status(404).json({ message: "Active match request not found" });
 
     await User.findByIdAndUpdate(request.user, { status: "online" });
+    clearMatchCooldown(request.user); // allow immediate re-search after cancel
 
     return res.status(200).json({ message: "Match request cancelled", data: request });
   } catch (error) {

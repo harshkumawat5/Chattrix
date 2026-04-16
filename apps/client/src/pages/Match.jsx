@@ -3,19 +3,22 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { getSocket, connectSocket, getPendingMatch, clearPendingMatch } from "../lib/socket";
 import { useAuthStore } from "../store/auth.store";
+import { useThemeStore } from "../store/theme.store";
 import "./Match.css";
 
+
 const DISTANCES = [
-  { label: "Nearby",      meters: 1000,  icon: "🏠" },
-  { label: "Neighborhood",meters: 5000,  icon: "🏘" },
-  { label: "City",        meters: 20000, icon: "🏙" },
-  { label: "Anywhere",    meters: 100000,icon: "🌍" },
+  { label: "Nearby",       meters: 1000,   svg: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg> },
+  { label: "Neighborhood", meters: 5000,   svg: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg> },
+  { label: "City",         meters: 20000,  svg: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15 11V5l-3-3-3 3v2H3v14h18V11h-6zm-8 8H5v-2h2v2zm0-4H5v-2h2v2zm0-4H5v-2h2v2zm6 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2zm6 12h-2v-2h2v2zm0-4h-2v-2h2v2z"/></svg> },
+  { label: "Anywhere",     meters: 100000, svg: <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg> },
 ];
 
 export default function Match() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { accessToken, user } = useAuthStore();
+  const { theme, toggle } = useThemeStore();
 
   const [status,      setStatus]      = useState("idle");
   const [mode,        setMode]        = useState("video");
@@ -29,9 +32,13 @@ export default function Match() {
 
   useEffect(() => {
     const autostart = searchParams.get("autostart");
+    const instant   = searchParams.get("instant") === "1";
     if (autostart === "video" || autostart === "text") {
       setMode(autostart);
-      const t = setTimeout(() => doSearch(autostart), 300);
+      // instant=1 means coming from skip/peer-left — search immediately, no delay
+      // normal autostart waits 2500ms past the 2s cooldown window
+      const delay = instant ? 50 : 2500;
+      const t = setTimeout(() => doSearch(autostart), delay);
       return () => clearTimeout(t);
     }
   }, []);
@@ -146,6 +153,9 @@ export default function Match() {
           <span className="logo">Chattrix</span>
         </div>
         <span className="match-username">@{user?.username}</span>
+        <button className="theme-toggle" onClick={toggle} title="Toggle theme">
+          {theme === "dark" ? "☀️" : "🌙"}
+        </button>
       </nav>
 
       <main className="match-main">
@@ -158,12 +168,16 @@ export default function Match() {
 
             <div className="mode-cards">
               <button className={`mode-card ${mode === "video" ? "active" : ""}`} onClick={() => setMode("video")}>
-                <span className="mode-icon">📹</span>
+                <span className="mode-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                </span>
                 <span className="mode-title">Video Chat</span>
                 <span className="mode-desc">See & talk face to face</span>
               </button>
               <button className={`mode-card ${mode === "text" ? "active" : ""}`} onClick={() => setMode("text")}>
-                <span className="mode-icon">💬</span>
+                <span className="mode-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
+                </span>
                 <span className="mode-title">Text Chat</span>
                 <span className="mode-desc">Anonymous, no camera needed</span>
               </button>
@@ -173,7 +187,8 @@ export default function Match() {
             {isGps ? (
               <div className="dist-section">
                 <div className="dist-label">
-                  📍 Match distance — <span className="dist-value">{DISTANCES[distIdx].label}</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{display:'inline',verticalAlign:'middle',marginRight:4}}><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                  Match distance — <span className="dist-value">{DISTANCES[distIdx].label}</span>
                 </div>
                 <div className="dist-pills">
                   {DISTANCES.map((d, i) => (
@@ -182,13 +197,16 @@ export default function Match() {
                       className={`dist-pill ${distIdx === i ? "active" : ""}`}
                       onClick={() => setDistIdx(i)}
                     >
-                      {d.icon} {d.label}
+                      {d.svg} {d.label}
                     </button>
                   ))}
                 </div>
               </div>
             ) : (
-              <p className="dist-ip-note">🌐 Matching within your city (IP-based)</p>
+              <p className="dist-ip-note">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style={{display:'inline',verticalAlign:'middle',marginRight:4}}><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                Matching within your city (IP-based)
+              </p>
             )}
 
             <button className="btn btn-primary btn-lg" onClick={() => doSearch(mode)}>

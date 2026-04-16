@@ -57,6 +57,8 @@ Chattrix/
 | 🟢 **Connection Quality** | Live RTT-based signal strength indicator |
 | 🔄 **Auto-reconnect** | WebRTC ICE restart on call drop |
 | 🌐 **TURN Server** | Metered.ca TURN relay for users behind strict NAT |
+| 🌙 **Dark / Light Mode** | Theme toggle persisted in localStorage |
+| 😊 **Emoji Picker** | WhatsApp-style emoji picker in chat and video call |
 
 ---
 
@@ -122,6 +124,7 @@ cp apps/client/.env.example apps/client/.env
 | `SESSION_TTL_MS` | `900000` | Username session duration (15 min). MongoDB TTL auto-deletes user after idle. |
 | `RATE_LIMIT_API_MAX` | `400` | API requests / 15 min / IP |
 | `RATE_LIMIT_AUTH_MAX` | `10` | Auth requests / 15 min / IP |
+| `RATE_LIMIT_CHECK_MAX` | `60` | Username check requests / 1 min / IP |
 | `RATE_LIMIT_MATCH_MAX` | `15` | Match requests / 1 min / userId |
 | `RATE_LIMIT_MATCH_COOLDOWN_MS` | `2000` | Cooldown between match requests |
 | `RATE_LIMIT_SOCKET_CONN_MAX` | `5` | Socket connections / 1 min / IP |
@@ -330,6 +333,21 @@ Skip → auto-search next    End → /ended screen
 </details>
 
 <details>
+<summary><strong>Theme Store</strong> — <code>apps/client/src/store/theme.store.js</code></summary>
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `theme` | `"dark" \| "light"` | Current theme |
+
+**Actions:** `toggle()` · `init()`
+
+**Persistence:** localStorage key `"chattrix-theme"`
+
+**On page load:** `main.jsx` calls `init()` → sets `data-theme` on `<html>`
+
+</details>
+
+<details>
 <summary><strong>API Client</strong> — <code>apps/client/src/lib/api.js</code></summary>
 
 - Base URL: `VITE_API_URL` (from `.env`)
@@ -349,6 +367,7 @@ Skip → auto-search next    End → /ended screen
 | `getSocket()` | Returns current socket or null |
 | `getPendingMatch()` / `clearPendingMatch()` | Cached `match-found` event |
 | `getPendingPeerLeft()` / `clearPendingPeerLeft()` | Cached `peer-left` event |
+| `getPendingPeerJoined()` / `clearPendingPeerJoined()` | Cached `peer-joined` event — fixes StrictMode WebRTC issue |
 
 > Cached events survive React StrictMode double-invoke. Socket auth: `io({ auth: { token: "Bearer <accessToken>" } })`
 
@@ -376,13 +395,14 @@ Skip → auto-search next    End → /ended screen
 
 | Action | Navigates to |
 |--------|-------------|
-| Skip ⏭ (video) | `/match?autostart=video` |
-| Skip ⏭ (text) | `/match?autostart=text` |
+| Skip ⏭ (video) | `/match?autostart=video&instant=1` |
+| Skip ⏭ (text) | `/match?autostart=text&instant=1` |
 | End 📵 | `/ended` |
-| `peer-left` received | `/match?autostart=video\|text` |
+| `peer-left` received | `/match?autostart=video\|text&instant=1` |
 | `match-found` with `mode=video` | `/call/:sessionId` |
 | `match-found` with `mode=text` | `/chat/:sessionId` |
-| `?autostart` param on Match | auto-triggers `doSearch(mode)` after 300ms |
+| `?autostart` + `instant=1` | triggers `doSearch(mode)` in 50ms |
+| `?autostart` without `instant` | triggers `doSearch(mode)` after 2500ms |
 | 401 response | `/` (username screen) |
 | Token expired on load | `/` (username screen) |
 
@@ -435,7 +455,8 @@ Skip → auto-search next    End → /ended screen
 | `GET` | `/api/users/check/:username` | — | `{ available: bool, suggestions? }` |
 | `POST` | `/api/users/auth/register` | `{ username, location? }` | `201 { data: user, accessToken }` |
 
-> No login, refresh, or logout endpoints — sessions are temporary (15 min TTL).
+> No login, refresh, or logout endpoints — sessions are temporary (15 min idle TTL).
+> Username check uses a separate generous limiter (60 req/min) since it fires on every keystroke.
 
 </details>
 

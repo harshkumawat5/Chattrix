@@ -10,8 +10,8 @@
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse 80% 60% at 50% -10%, #7c3aed22 0%, transparent 70%),
-    radial-gradient(ellipse 50% 40% at 80% 80%, #a855f711 0%, transparent 60%),
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(139,92,246,0.15) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 40% at 80% 80%, rgba(236,72,153,0.08) 0%, transparent 60%),
     var(--bg);
   z-index: 0;
 }
@@ -79,7 +79,7 @@ h1 {
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, var(--accent2) 0%, var(--accent3) 50%, #f0abfc 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent3) 50%, var(--danger2) 100%);
   background-size: 200% 200%;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -177,8 +177,8 @@ h1 {
 .suggestion-pill {
   padding: 4px 10px;
   border-radius: 99px;
-  border: 1px solid var(--accent2);
-  background: #7c3aed14;
+  border: 1px solid var(--accent);
+  background: rgba(139,92,246,0.1);
   color: var(--accent3);
   font-size: 12px;
   font-weight: 500;
@@ -187,7 +187,7 @@ h1 {
   transition: all 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
-.suggestion-pill:active { background: #7c3aed28; }
+.suggestion-pill:active { background: rgba(139,92,246,0.2); }
 
 .location-toggle {
   display: flex;

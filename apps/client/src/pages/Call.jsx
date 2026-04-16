@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getSocket, getPendingPeerLeft, clearPendingPeerLeft } from "../lib/socket";
+import { getSocket, getPendingPeerLeft, clearPendingPeerLeft, getPendingPeerJoined, clearPendingPeerJoined } from "../lib/socket";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
 import Icon from "../components/Icon";
+import EmojiPicker from "../components/EmojiPicker";
 import "./Call.css";
 
 export default function Call() {
@@ -24,6 +25,7 @@ export default function Call() {
   const recordingRef = useRef(null);
   const recordingUploadingRef = useRef(false);
   const connectedRef = useRef(false);
+  const onPeerJoinedRef = useRef(null); // store handler ref for replay
 
   const [connected, setConnected] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -34,7 +36,8 @@ export default function Call() {
   const [msgInput, setMsgInput] = useState("");
   const [unread, setUnread] = useState(0);
   const [peerTyping, setPeerTyping] = useState(false);
-  const [connQuality, setConnQuality] = useState(null); // "good"|"fair"|"poor"
+  const [connQuality, setConnQuality] = useState(null);
+  const [showEmoji,   setShowEmoji]   = useState(false);
 
   useEffect(() => {
     if (chatOpen) {
@@ -330,7 +333,7 @@ export default function Call() {
 
     if (getPendingPeerLeft()) {
       clearPendingPeerLeft();
-      navigate("/match?autostart=video");
+      navigate("/match?autostart=video&instant=1");
       return;
     }
 
@@ -349,7 +352,7 @@ export default function Call() {
       if (!endedViaApi) {
         socket.emit("leave-room");
       }
-      navigate("/match?autostart=video");
+      navigate("/match?autostart=video&instant=1");
     };
 
     const drainQueue = async (pc) => {
@@ -426,6 +429,7 @@ export default function Call() {
       await pc.setLocalDescription(offer);
       socket.emit("offer", { sessionId, offer });
     };
+    onPeerJoinedRef.current = onPeerJoined;
 
     const onOffer = async ({ offer }) => {
       if (cancelled) return;
@@ -470,9 +474,8 @@ export default function Call() {
       clearPendingPeerLeft();
       remoteStreamRef.current = null;
       if (remoteRef.current) remoteRef.current.srcObject = null;
-      navigate("/match?autostart=video");
+      navigate("/match?autostart=video&instant=1");
     };
-
     const onReceiveMessage = ({ text, fromUserId, timestamp }) => {
       if (cancelled) return;
       setMessages((prev) => [...prev, { text, fromUserId, timestamp, mine: false }]);
@@ -501,7 +504,7 @@ export default function Call() {
           clearInterval(pollTimer);
           void stopRecordingAndUpload();
           exited = true;
-          if (!cancelled) navigate("/match?autostart=video");
+          if (!cancelled) navigate("/match?autostart=video&instant=1");
         }
       } catch (error) {
         void error;
@@ -550,6 +553,13 @@ export default function Call() {
       stream.getTracks().forEach((t) => pc.addTrack(t, stream));
       startRecordingIfNeeded();
       socket.emit("join-room", { sessionId });
+
+      // if peer-joined fired during StrictMode first mount, replay it now
+      const cached = getPendingPeerJoined();
+      if (cached) {
+        clearPendingPeerJoined();
+        setTimeout(() => onPeerJoinedRef.current?.(cached), 100);
+      }
     };
 
     start();
@@ -564,6 +574,7 @@ export default function Call() {
       clearTimeout(connectTimeout);
       offeredRef.current = false;
       queueRef.current = [];
+      clearPendingPeerJoined();
       socket.off("ice-config", onIceConfig);
       socket.off("peer-joined", onPeerJoined);
       socket.off("offer", onOffer);
@@ -595,7 +606,8 @@ export default function Call() {
     const socket = getSocket();
     if (socket) socket.emit("leave-room");
     api.patch(`/api/sessions/${sessionId}/end`, { endReason: reason }, accessToken).catch(() => {});
-    navigate(reason === "skipped" ? "/match?autostart=video" : "/ended");
+    // for skip: go directly to match with autostart — no idle screen
+    navigate(reason === "skipped" ? "/match?autostart=video&instant=1" : "/ended");
   };
 
   const sendMessage = (e) => {
@@ -621,6 +633,10 @@ export default function Call() {
     }, 1500);
   };
 
+  const handleEmojiSelect = (emoji) => {
+    setMsgInput((prev) => prev + emoji);
+  };
+
   const blockPeer = async () => {
     if (!peerUserIdRef.current) return;
     await api.post(`/api/users/block/${peerUserIdRef.current}`, null, accessToken).catch(() => {});
@@ -631,7 +647,7 @@ export default function Call() {
   const qualityLabel = { good: "Good", fair: "Fair", poor: "Poor" };
 
   return (
-    <div className="call-page">
+    <div className={"call-page" + (chatOpen ? " chat-open" : "")}>
       <div className="call-remote">
         <video ref={remoteRef} autoPlay playsInline className="call-video" />
         {!connected && (
@@ -681,6 +697,22 @@ export default function Call() {
           <div ref={chatEndRef} />
         </div>
         <form className="chat-input-row" onSubmit={sendMessage}>
+          <div className="emoji-btn-wrap">
+            <button
+              type="button"
+              className="emoji-toggle-btn"
+              onClick={() => setShowEmoji((v) => !v)}
+              title="Emoji"
+            >
+              <Icon name="smile" size={20} color="rgba(255,255,255,0.7)" />
+            </button>
+            {showEmoji && (
+              <EmojiPicker
+                onSelect={handleEmojiSelect}
+                onClose={() => setShowEmoji(false)}
+              />
+            )}
+          </div>
           <input
             className="chat-input"
             placeholder="Type a message..."
@@ -689,7 +721,7 @@ export default function Call() {
             autoComplete="off"
           />
           <button type="submit" className="chat-send">
-            ↑
+            <Icon name="send" size={15} />
           </button>
         </form>
       </div>
@@ -697,50 +729,43 @@ export default function Call() {
       <div className="call-hud">
         <div className="call-timer">{fmt(duration)}</div>
         <div className="call-controls">
-          <button
-            className={`ctrl-btn ${muted ? "active" : ""}`}
-            onClick={() => {
-              streamRef.current?.getAudioTracks().forEach((t) => {
-                t.enabled = !t.enabled;
-              });
-              setMuted((v) => !v);
-            }}
-          >
-            <Icon name={muted ? "micOff" : "mic"} size={20} />
+
+          <button className={`ctrl-btn ${muted ? "active" : ""}`}
+            onClick={() => { streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; }); setMuted((v) => !v); }}>
+            <div className="ctrl-btn-circle"><Icon name={muted ? "micOff" : "mic"} size={22} /></div>
+            <span className="ctrl-btn-label">{muted ? "Unmute" : "Mute"}</span>
           </button>
 
-          <button
-            className={`ctrl-btn ${camOff ? "active" : ""}`}
-            onClick={() => {
-              streamRef.current?.getVideoTracks().forEach((t) => {
-                t.enabled = !t.enabled;
-              });
-              setCamOff((v) => !v);
-            }}
-          >
-            <Icon name={camOff ? "videoOff" : "video"} size={20} />
+          <button className={`ctrl-btn ${camOff ? "active" : ""}`}
+            onClick={() => { streamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !t.enabled; }); setCamOff((v) => !v); }}>
+            <div className="ctrl-btn-circle"><Icon name={camOff ? "videoOff" : "video"} size={22} /></div>
+            <span className="ctrl-btn-label">{camOff ? "Cam On" : "Cam Off"}</span>
           </button>
 
-          <button
-            className="ctrl-btn chat-btn"
-            onClick={() => {
-              setChatOpen((v) => !v);
-              setUnread(0);
-            }}
-          >
-            <Icon name="messageCircle" size={20} />
-            {unread > 0 && !chatOpen && <span className="unread-badge">{unread}</span>}
+          <button className="ctrl-btn chat-btn"
+            onClick={() => { setChatOpen((v) => !v); setUnread(0); }}>
+            <div className="ctrl-btn-circle">
+              <Icon name="messageCircle" size={22} />
+              {unread > 0 && !chatOpen && <span className="unread-badge">{unread}</span>}
+            </div>
+            <span className="ctrl-btn-label">Chat</span>
           </button>
 
-          <button className="ctrl-btn block-btn" onClick={blockPeer} title="Block user">
-            <Icon name="ban" size={18} />
+          <button className="ctrl-btn block-btn" onClick={blockPeer}>
+            <div className="ctrl-btn-circle"><Icon name="ban" size={20} /></div>
+            <span className="ctrl-btn-label">Block</span>
           </button>
+
           <button className="ctrl-btn skip" onClick={() => end("skipped")}>
-            <Icon name="skipForward" size={20} />
+            <div className="ctrl-btn-circle"><Icon name="skipForward" size={22} /></div>
+            <span className="ctrl-btn-label">Next</span>
           </button>
+
           <button className="ctrl-btn end" onClick={() => end("completed")}>
-            <Icon name="endCall" size={20} />
+            <div className="ctrl-btn-circle"><Icon name="endCall" size={24} /></div>
+            <span className="ctrl-btn-label">End</span>
           </button>
+
         </div>
       </div>
     </div>

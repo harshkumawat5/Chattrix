@@ -4,11 +4,13 @@ import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
 import { connectSocket } from "../lib/socket";
 import Icon from "../components/Icon";
+import { useThemeStore } from "../store/theme.store";
 import "./Landing.css";
 
 export default function Landing() {
   const navigate = useNavigate();
   const { user, accessToken, setAuth } = useAuthStore();
+  const { theme, toggle } = useThemeStore();
 
   const [username,     setUsername]     = useState("");
   const [status,       setStatus]       = useState("idle"); // idle | checking | available | taken | invalid | loading
@@ -45,7 +47,9 @@ export default function Landing() {
           setStatus("taken");
           setSuggestions(data.suggestions || []);
         }
-      } catch {
+      } catch (err) {
+        // on 429 keep current status — don't block the user
+        if (err.message?.includes("429") || err.message?.includes("Too many")) return;
         setStatus("idle");
       }
     }, 400);
@@ -89,7 +93,7 @@ export default function Landing() {
   };
 
   const statusIcon = {
-    checking:  <Icon name="loader" size={18} className="spin" />,
+    checking:  <Icon name="loader" size={18} />,
     available: <Icon name="checkCircle" size={18} color="var(--green)" />,
     taken:     <Icon name="xCircle" size={18} color="var(--red)" />,
     invalid:   <Icon name="alertTriangle" size={18} color="var(--orange)" />,
@@ -105,6 +109,9 @@ export default function Landing() {
           <span className="logo">Chattrix</span>
         </div>
         <div className="badge">🌍 Proximity-based random chat</div>
+        <button className="theme-toggle" onClick={toggle} title="Toggle theme">
+          {theme === "dark" ? "☀️" : "🌙"}
+        </button>
       </nav>
 
       <main className="landing-hero fade-up">
@@ -114,7 +121,7 @@ export default function Landing() {
         </h1>
         <p className="hero-sub">
           Pick a username and start chatting instantly.<br />
-          No sign-up. No password. Gone in 15 minutes.
+          No sign-up. No password. Username expires when you leave.
         </p>
 
         <form className="username-form" onSubmit={submit}>
@@ -174,7 +181,7 @@ export default function Landing() {
         <div className="hero-stats">
           <div className="stat"><span>⚡</span> Instant match</div>
           <div className="stat"><span>📍</span> Location-aware</div>
-          <div className="stat"><span>⏱</span> 15 min sessions</div>
+          <div className="stat"><span>⏱</span> No account needed</div>
         </div>
       </main>
     </div>

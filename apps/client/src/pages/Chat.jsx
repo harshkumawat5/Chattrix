@@ -4,23 +4,24 @@ import { getSocket, getPendingPeerLeft, clearPendingPeerLeft } from "../lib/sock
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
 import Icon from "../components/Icon";
+import EmojiPicker from "../components/EmojiPicker";
 import "./Chat.css";
 
 export default function Chat() {
   const { sessionId } = useParams();
   const navigate      = useNavigate();
-  const { accessToken, user } = useAuthStore();
+  const { accessToken } = useAuthStore();
 
   const chatEndRef = useRef(null);
   const inputRef   = useRef(null);
 
-  const [messages,  setMessages]  = useState([]);
-  const [msgInput,  setMsgInput]  = useState("");
-  const [connected, setConnected] = useState(false);
-  const [duration,  setDuration]  = useState(0);
-  const [peerTyping, setPeerTyping] = useState(false);
+  const [messages,    setMessages]    = useState([]);
+  const [msgInput,    setMsgInput]    = useState("");
+  const [connected,   setConnected]   = useState(false);
+  const [duration,    setDuration]    = useState(0);
+  const [peerTyping,  setPeerTyping]  = useState(false);
+  const [showEmoji,   setShowEmoji]   = useState(false);
   const typingTimer = useRef(null);
-  const peerUserIdRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -38,24 +39,17 @@ export default function Chat() {
 
     let cancelled = false;
 
-    const onPeerJoined = () => {
-      if (!cancelled) setConnected(true);
-    };
-
+    const onPeerJoined  = () => { if (!cancelled) setConnected(true); };
     const onReceiveMessage = ({ text, fromUserId, timestamp }) => {
       if (cancelled) return;
       setMessages((prev) => [...prev, { text, fromUserId, timestamp, mine: false }]);
     };
-
-    const onPeerLeft = () => {
+    const onPeerLeft    = () => {
       if (cancelled) return;
       clearPendingPeerLeft();
-      navigate("/match?autostart=text");
+      navigate("/match?autostart=text&instant=1");
     };
-
-    const onPeerTyping = ({ isTyping }) => {
-      if (!cancelled) setPeerTyping(isTyping);
-    };
+    const onPeerTyping  = ({ isTyping }) => { if (!cancelled) setPeerTyping(isTyping); };
 
     socket.on("peer-joined",     onPeerJoined);
     socket.on("receive-message", onReceiveMessage);
@@ -67,19 +61,14 @@ export default function Chat() {
         const data = await api.get(`/api/sessions/${sessionId}`, accessToken);
         if (data.data?.status === "ended") {
           clearInterval(pollTimer);
-          if (!cancelled) navigate("/match?autostart=text");
+          if (!cancelled) navigate("/match?autostart=text&instant=1");
         }
       } catch {}
     }, 3000);
 
     socket.emit("join-room", { sessionId });
 
-    // fallback: if we joined second, peer-joined fires on the other peer
-    // mark connected after 2s so we can start typing
-    const connTimer = setTimeout(() => {
-      if (!cancelled) setConnected(true);
-    }, 2000);
-
+    const connTimer = setTimeout(() => { if (!cancelled) setConnected(true); }, 2000);
     const timer = setInterval(() => setDuration((d) => d + 1), 1000);
     inputRef.current?.focus();
 
@@ -98,38 +87,46 @@ export default function Chat() {
   const fmt = (s) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
+  const emitTyping = (isTyping) => {
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit("typing", { sessionId, isTyping });
+  };
+
   const sendMessage = (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     const text = msgInput.trim();
     if (!text) return;
     const socket = getSocket();
     if (!socket) return;
     socket.emit("send-message", { sessionId, text });
-    socket.emit("typing", { sessionId, isTyping: false });
+    emitTyping(false);
     setMessages((prev) => [...prev, { text, mine: true, timestamp: Date.now() }]);
     setMsgInput("");
+    inputRef.current?.focus();
   };
 
   const handleTyping = (e) => {
     setMsgInput(e.target.value);
-    const socket = getSocket();
-    if (!socket) return;
-    socket.emit("typing", { sessionId, isTyping: true });
+    emitTyping(true);
     clearTimeout(typingTimer.current);
-    typingTimer.current = setTimeout(() => {
-      socket.emit("typing", { sessionId, isTyping: false });
-    }, 1500);
+    typingTimer.current = setTimeout(() => emitTyping(false), 1500);
+  };
+
+  const handleEmojiSelect = (emoji) => {
+    setMsgInput((prev) => prev + emoji);
+    inputRef.current?.focus();
   };
 
   const end = (reason = "completed") => {
     const socket = getSocket();
     if (socket) socket.emit("leave-room");
     api.patch(`/api/sessions/${sessionId}/end`, { endReason: reason }, accessToken).catch(() => {});
-    navigate(reason === "skipped" ? "/match?autostart=text" : "/ended");
+    navigate(reason === "skipped" ? "/match?autostart=text&instant=1" : "/ended");
   };
 
   return (
-    <div className="chat-page">
+    <div className={`chat-page${showEmoji ? " emoji-open" : ""}`}>
       <div className="chat-page-bg" />
 
       <header className="chat-page-header">
@@ -139,11 +136,15 @@ export default function Chat() {
         </div>
         <div className="chat-page-status">
           <span className={`status-dot ${connected ? "online" : "waiting"}`} />
-          <span>{connected ? `Connected · ${fmt(duration)}` : "Waiting for stranger..."}</span>
+          <span>{connected ? `Connected · ${fmt(duration)}` : "Waiting..."}</span>
         </div>
         <div className="chat-page-actions">
-          <button className="btn btn-ghost btn-sm" onClick={() => end("skipped")}><Icon name="skipForward" size={16} /> Skip</button>
-          <button className="btn btn-danger btn-sm" onClick={() => end("completed")}><Icon name="phoneOff" size={16} /> End</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => end("skipped")}>
+            <Icon name="skipForward" size={14} /> Skip
+          </button>
+          <button className="btn btn-danger btn-sm" onClick={() => end("completed")}>
+            <Icon name="endCall" size={14} /> End
+          </button>
         </div>
       </header>
 
@@ -171,6 +172,7 @@ export default function Chat() {
             <div className="chat-page-bubble">{m.text}</div>
           </div>
         ))}
+
         {peerTyping && (
           <div className="chat-page-msg theirs">
             <div className="chat-page-bubble typing-indicator">
@@ -182,17 +184,40 @@ export default function Chat() {
       </div>
 
       <form className="chat-page-input-row" onSubmit={sendMessage}>
+        {/* emoji picker */}
+        <div className="emoji-btn-wrap">
+          <button
+            type="button"
+            className="emoji-toggle-btn"
+            onClick={() => setShowEmoji((v) => !v)}
+            disabled={!connected}
+            title="Emoji"
+          >
+            <Icon name="smile" size={22} color="var(--muted)" />
+          </button>
+          {showEmoji && (
+            <EmojiPicker
+              onSelect={handleEmojiSelect}
+              onClose={() => setShowEmoji(false)}
+            />
+          )}
+        </div>
+
         <input
           ref={inputRef}
           className="input chat-page-input"
           placeholder={connected ? "Type a message..." : "Waiting to connect..."}
           value={msgInput}
-          onChange={(e) => handleTyping(e)}
+          onChange={handleTyping}
           disabled={!connected}
           autoComplete="off"
         />
-        <button type="submit" className="chat-page-send" disabled={!connected || !msgInput.trim()}>
-          <Icon name="chevronUp" size={18} />
+        <button
+          type="submit"
+          className="chat-page-send"
+          disabled={!connected || !msgInput.trim()}
+        >
+          <Icon name="send" size={16} />
         </button>
       </form>
     </div>

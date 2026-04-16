@@ -2,15 +2,18 @@ import { io } from "socket.io-client";
 
 let socket = null;
 
-let pendingMatchFound = null;
-let pendingPeerLeft   = null;
+let pendingMatchFound  = null;
+let pendingPeerLeft    = null;
+let pendingPeerJoined  = null; // cached so StrictMode double-invoke never misses it
 
 export const getSocket = () => socket;
 
-export const getPendingMatch    = () => pendingMatchFound;
-export const clearPendingMatch  = () => { pendingMatchFound = null; };
-export const getPendingPeerLeft  = () => pendingPeerLeft;
+export const getPendingMatch      = () => pendingMatchFound;
+export const clearPendingMatch    = () => { pendingMatchFound = null; };
+export const getPendingPeerLeft   = () => pendingPeerLeft;
 export const clearPendingPeerLeft = () => { pendingPeerLeft = null; };
+export const getPendingPeerJoined  = () => pendingPeerJoined;
+export const clearPendingPeerJoined = () => { pendingPeerJoined = null; };
 
 export const connectSocket = (token) => {
   if (socket) return socket;
@@ -25,6 +28,7 @@ export const connectSocket = (token) => {
 
   socket.on("match-found", (data) => { pendingMatchFound = data; });
   socket.on("peer-left",   (data) => { pendingPeerLeft   = data; });
+  socket.on("peer-joined", (data) => { pendingPeerJoined = data; });
 
   return socket;
 };
@@ -32,6 +36,7 @@ export const connectSocket = (token) => {
 export const disconnectSocket = () => {
   socket?.disconnect();
   socket = null;
-  pendingMatchFound = null;
-  pendingPeerLeft   = null;
+  pendingMatchFound  = null;
+  pendingPeerLeft    = null;
+  pendingPeerJoined  = null;
 };

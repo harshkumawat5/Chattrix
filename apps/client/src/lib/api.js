@@ -21,6 +21,13 @@ const request = async (method, path, body, token) => {
     throw new Error("Session expired");
   }
 
+  // 429 — rate limited, throw with status so caller can handle gracefully
+  if (res.status === 429) {
+    const err = new Error(data.message || "Too many requests");
+    err.status = 429;
+    throw err;
+  }
+
   // 409 — return with status so caller can handle (e.g. stale match request)
   if (res.status === 409) {
     const err = new Error(data.message || "Conflict");

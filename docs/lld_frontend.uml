@@ -337,19 +337,24 @@ note over User, Backend
   Guard: no accessToken OR expired token → redirect /
 
   <color:#8E44AD>STATE (Zustand — persisted)</color>
-  user, accessToken
-  setAuth(user, accessToken) / clearAuth()
+  auth.store:  user, accessToken
+               setAuth(user, accessToken) / clearAuth()
+  theme.store: theme ("dark"|"light")
+               toggle() — sets data-theme on html
+               init()   — called in main.jsx on load
   No refreshToken — sessions are temporary
 
   <color:#E67E22>API CLIENT (api.js)</color>
   401 → clearAuth() + redirect / (no refresh attempt)
+  429 → keep last known status (username check — don't block button)
   409 → err.status=409, err.data = existing resource
   All requests: Authorization: Bearer <token>
 
   <color:#1A5276>SOCKET CLIENT (socket.js)</color>
   Singleton — never replaced once created
   connectSocket(token) — returns existing if alive
-  Caches: pendingMatchFound, pendingPeerLeft
+  Caches: pendingMatchFound, pendingPeerLeft, pendingPeerJoined
+  pendingPeerJoined fixes StrictMode WebRTC double-invoke
   On page load: main.jsx checks JWT expiry → connect or clearAuth
 
   <color:#C0392B>GUARDS</color>

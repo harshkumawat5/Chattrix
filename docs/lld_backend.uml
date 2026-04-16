@@ -345,7 +345,7 @@ end
 
 note over ClientA, Job
   <color:#C0392B>AUTH (public — authLimiter)</color>
-  GET    /api/users/check/:username     → { available, suggestions? }
+  GET    /api/users/check/:username     → { available, suggestions? } (checkUsernameLimiter: 60/min)
   POST   /api/users/auth/register       → { data: user, accessToken }
   No login / No refresh / No logout — username sessions are temporary
 
@@ -399,8 +399,9 @@ note over ClientA, Job
   <color:#784212>RATE LIMITS (all from .env)</color>
   apiLimiter           400 req / 15 min  per IP
   authLimiter           10 req / 15 min  per IP
+  checkUsernameLimiter  60 req / 1 min   per IP  (username check — fires on keystroke)
   matchLimiter          15 req / 1 min   per userId
-  matchCooldownGuard     2 sec cooldown  per userId
+  matchCooldownGuard     2 sec cooldown  per userId (cleared on cancel)
   socketConnLimiter      5 conn / 1 min  per IP
   socketMsgLimiter      10 msg / 1 sec   per userId (signalling exempt)
 
