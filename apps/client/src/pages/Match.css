@@ -20,7 +20,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 12px 14px;
+  gap: 8px;
 }
 
 @media (min-width: 400px) {
@@ -40,7 +41,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px 16px;
+  padding: 16px 14px;
+  overflow-x: hidden;
 }
 
 @media (min-width: 400px) {
@@ -91,6 +93,7 @@
   display: flex;
   gap: 10px;
   width: 100%;
+  min-width: 0;
 }
 
 .mode-card {
@@ -152,6 +155,7 @@
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .dist-pill {

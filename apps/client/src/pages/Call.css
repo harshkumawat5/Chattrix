@@ -172,6 +172,8 @@
   padding-bottom: max(10px, env(safe-area-inset-bottom));
   border-top: 1px solid rgba(255,255,255,0.1);
   flex-shrink: 0;
+  position: relative;
+  z-index: 310;
 }
 
 .chat-input {
@@ -244,9 +246,13 @@
 
 .call-controls {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   align-items: flex-end;
   flex-wrap: nowrap;
+  justify-content: center;
+  width: 100%;
+  padding: 0 4px;
+  box-sizing: border-box;
 }
 
 /* ── CONTROL BUTTON — Zoom/Instagram style with label ───── */
@@ -265,8 +271,8 @@
 }
 
 .ctrl-btn-circle {
-  width: 52px;
-  height: 52px;
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   background: rgba(255,255,255,0.15);
   backdrop-filter: blur(12px);
@@ -291,10 +297,15 @@
   white-space: nowrap;
 }
 
-@media (min-width: 380px) {
-  .ctrl-btn-circle { width: 56px; height: 56px; }
+@media (min-width: 360px) {
+  .ctrl-btn-circle { width: 50px; height: 50px; }
+  .call-controls   { gap: 8px; }
+}
+
+@media (min-width: 400px) {
+  .ctrl-btn-circle { width: 54px; height: 54px; }
   .ctrl-btn-label  { font-size: 11px; }
-  .call-controls   { gap: 14px; }
+  .call-controls   { gap: 12px; }
 }
 
 @media (min-width: 480px) {
@@ -323,7 +334,7 @@
 
 /* end call — solid red, larger, Zoom style */
 .ctrl-btn.end .ctrl-btn-circle {
-  width: 60px; height: 60px;
+  width: 54px; height: 54px;
   background: #ef4444;
   border-color: #ef4444;
   box-shadow: 0 4px 20px rgba(239,68,68,0.55);
@@ -332,7 +343,8 @@
   background: #dc2626;
   transform: scale(0.88);
 }
-@media (min-width: 380px) { .ctrl-btn.end .ctrl-btn-circle { width: 64px; height: 64px; } }
+@media (min-width: 360px) { .ctrl-btn.end .ctrl-btn-circle { width: 58px; height: 58px; } }
+@media (min-width: 400px) { .ctrl-btn.end .ctrl-btn-circle { width: 62px; height: 62px; } }
 @media (min-width: 480px) { .ctrl-btn.end .ctrl-btn-circle { width: 68px; height: 68px; } }
 
 /* block */

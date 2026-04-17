@@ -1,9 +1,10 @@
 .ended-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
+  padding: 16px;
 }
 
 .ended-bg {
@@ -25,13 +26,14 @@
 }
 
 .ended-emoji {
-  font-size: 72px;
+  font-size: 56px;
   line-height: 1;
   margin-bottom: 8px;
 }
+@media (min-width: 400px) { .ended-emoji { font-size: 72px; } }
 
 .ended-card h2 {
-  font-size: 36px;
+  font-size: 28px;
   font-weight: 800;
   letter-spacing: -1px;
 }

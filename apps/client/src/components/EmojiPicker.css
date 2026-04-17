@@ -37,7 +37,10 @@ em-emoji-picker {
 @media (max-width: 480px) {
   .emoji-overlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 300px;
     background: rgba(0,0,0,0.5);
     z-index: 299;
   }
@@ -55,7 +58,7 @@ em-emoji-picker {
 
   em-emoji-picker {
     width: 100% !important;
-    height: 340px !important;
+    height: 300px !important;
     border-radius: 20px 20px 0 0 !important;
   }
 }

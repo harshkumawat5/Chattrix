@@ -21,6 +21,7 @@ export default function Call() {
   const offeredRef = useRef(false);
   const chatEndRef = useRef(null);
   const typingTimer = useRef(null);
+  const callInputRowRef = useRef(null);
   const peerUserIdRef = useRef(null);
   const recordingRef = useRef(null);
   const recordingUploadingRef = useRef(false);
@@ -29,7 +30,6 @@ export default function Call() {
 
   const [connected, setConnected] = useState(false);
   const [muted, setMuted] = useState(false);
-  const [camOff, setCamOff] = useState(false);
   const [duration, setDuration] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -696,7 +696,7 @@ export default function Call() {
           )}
           <div ref={chatEndRef} />
         </div>
-        <form className="chat-input-row" onSubmit={sendMessage}>
+        <form className="chat-input-row" onSubmit={sendMessage} ref={callInputRowRef}>
           <div className="emoji-btn-wrap">
             <button
               type="button"
@@ -710,6 +710,7 @@ export default function Call() {
               <EmojiPicker
                 onSelect={handleEmojiSelect}
                 onClose={() => setShowEmoji(false)}
+                excludeRef={callInputRowRef}
               />
             )}
           </div>
@@ -734,12 +735,6 @@ export default function Call() {
             onClick={() => { streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; }); setMuted((v) => !v); }}>
             <div className="ctrl-btn-circle"><Icon name={muted ? "micOff" : "mic"} size={22} /></div>
             <span className="ctrl-btn-label">{muted ? "Unmute" : "Mute"}</span>
-          </button>
-
-          <button className={`ctrl-btn ${camOff ? "active" : ""}`}
-            onClick={() => { streamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !t.enabled; }); setCamOff((v) => !v); }}>
-            <div className="ctrl-btn-circle"><Icon name={camOff ? "videoOff" : "video"} size={22} /></div>
-            <span className="ctrl-btn-label">{camOff ? "Cam On" : "Cam Off"}</span>
           </button>
 
           <button className="ctrl-btn chat-btn"

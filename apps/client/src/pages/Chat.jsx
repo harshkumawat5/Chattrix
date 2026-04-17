@@ -14,6 +14,7 @@ export default function Chat() {
 
   const chatEndRef = useRef(null);
   const inputRef   = useRef(null);
+  const inputRowRef = useRef(null);
 
   const [messages,    setMessages]    = useState([]);
   const [msgInput,    setMsgInput]    = useState("");
@@ -183,7 +184,7 @@ export default function Chat() {
         <div ref={chatEndRef} />
       </div>
 
-      <form className="chat-page-input-row" onSubmit={sendMessage}>
+      <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef}>
         {/* emoji picker */}
         <div className="emoji-btn-wrap">
           <button
@@ -199,6 +200,7 @@ export default function Chat() {
             <EmojiPicker
               onSelect={handleEmojiSelect}
               onClose={() => setShowEmoji(false)}
+              excludeRef={inputRowRef}
             />
           )}
         </div>
