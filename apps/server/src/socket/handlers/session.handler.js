@@ -48,6 +48,13 @@ const handleDisconnect = async (io, socket, endReason) => {
   const { sessionId, userId } = socket.data;
   if (!sessionId || !userId) return;
 
+  // Always notify peers immediately — don't wait for DB
+  socket.to(sessionId).emit("peer-left", {
+    userId,
+    endReason,
+    message: "Your partner has left the session",
+  });
+
   try {
     const session = await ChatSession.findOneAndUpdate(
       { _id: sessionId, status: "active" },
@@ -55,15 +62,9 @@ const handleDisconnect = async (io, socket, endReason) => {
       { returnDocument: "after" }
     );
 
-    if (!session) return; // already ended
-
-    await User.updateMany({ _id: { $in: session.participants } }, { status: "online" });
-
-    socket.to(sessionId).emit("peer-left", {
-      userId,
-      endReason,
-      message: "Your partner has left the session",
-    });
+    if (session) {
+      await User.updateMany({ _id: { $in: session.participants } }, { status: "online" });
+    }
   } catch {
     // silent — disconnect path should never throw to client
   }

@@ -305,17 +305,37 @@ export default function Call() {
         socket.emit("ice-candidate", { sessionId, candidate: e.candidate });
       };
 
-      // #7 — reconnect on ICE failure
+      // #7 — reconnect on ICE failure with exponential backoff
+      let iceRestartAttempts = 0;
       pc.oniceconnectionstatechange = () => {
         if (cancelled) return;
         const state = pc.iceConnectionState;
-        if (state === "disconnected" || state === "failed") {
+        if (state === "disconnected") {
           setConnected(false);
           setConnQuality(null);
-          // attempt restart after 2s
+          // brief grace period — mobile network handoff can cause transient disconnect
+          setTimeout(async () => {
+            if (cancelled || !pcRef.current) return;
+            if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+              try {
+                iceRestartAttempts++;
+                offeredRef.current = false;
+                const offer = await pc.createOffer({ iceRestart: true });
+                await pc.setLocalDescription(offer);
+                socket.emit("offer", { sessionId, offer });
+              } catch (error) {
+                void error;
+              }
+            }
+          }, Math.min(1000 * iceRestartAttempts, 5000));
+        }
+        if (state === "failed") {
+          setConnected(false);
+          setConnQuality(null);
           setTimeout(async () => {
             if (cancelled || !pcRef.current) return;
             try {
+              iceRestartAttempts++;
               offeredRef.current = false;
               const offer = await pc.createOffer({ iceRestart: true });
               await pc.setLocalDescription(offer);
@@ -323,9 +343,10 @@ export default function Call() {
             } catch (error) {
               void error;
             }
-          }, 2000);
+          }, Math.min(1500 * iceRestartAttempts, 8000));
         }
         if (state === "connected" || state === "completed") {
+          iceRestartAttempts = 0;
           setConnected(true);
         }
       };
@@ -442,7 +463,7 @@ export default function Call() {
       } catch (error) {
         void error;
       }
-    }, 3000);
+    }, 1500);
 
     const connectTimeout = setTimeout(() => {
       const iceState = pcRef.current?.iceConnectionState;
@@ -457,7 +478,14 @@ export default function Call() {
     }, 25000);
 
     const start = async () => {
-      const iceServers = socket.iceServers || [{ urls: "stun:stun.l.google.com:19302" }];
+      const defaultStun = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+      ];
+      // Merge TURN servers from Metered with STUN fallbacks
+      const turnServers = socket.iceServers || [];
+      const iceServers = [...turnServers, ...defaultStun];
       const pc = createPC(iceServers);
 
       let stream;
@@ -675,7 +703,8 @@ export default function Call() {
             onChange={handleTyping}
             autoComplete="off"
           />
-          <button type="submit" className="chat-send">
+          <button type="submit" className="chat-send"
+            onMouseDown={(e) => e.preventDefault()}>
             <Icon name="send" size={15} />
           </button>
         </form>

@@ -94,7 +94,7 @@ export default function Chat() {
           if (!cancelled && !showReportRef.current) navigate("/match?autostart=text&instant=1");
         }
       } catch {}
-    }, 3000);
+    }, 1500);
 
     socket.emit("join-room", { sessionId });
 
@@ -283,6 +283,8 @@ export default function Chat() {
           type="submit"
           className="chat-page-send"
           disabled={!connected || !msgInput.trim()}
+          onMouseDown={(e) => e.preventDefault()}
+          onTouchEnd={(e) => { e.preventDefault(); sendMessage(); }}
         >
           <Icon name="send" size={16} />
         </button>
