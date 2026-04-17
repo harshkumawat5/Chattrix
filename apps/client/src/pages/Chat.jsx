@@ -153,12 +153,12 @@ export default function Chat() {
   const end = (reason = "completed") => {
     const socket = getSocket();
     if (socket) socket.emit("leave-room");
+    // Fire API as backup — server socket handler is primary
     api.patch(`/api/sessions/${sessionId}/end`, { endReason: reason }, accessToken).catch(() => {});
     navigate(reason === "skipped" ? "/match?autostart=text&instant=1" : "/ended");
   };
 
   const blockPeer = () => {
-    // Step 1: immediately disconnect
     const socket = getSocket();
     if (socket) socket.emit("leave-room");
     api.patch(`/api/sessions/${sessionId}/end`, { endReason: "skipped" }, accessToken).catch(() => {});
@@ -250,7 +250,7 @@ export default function Chat() {
         <div ref={chatEndRef} style={{ height: 0 }} />
       </div>
 
-      <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef} action="#">
+      <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef}>
         {blockedMsg && <div className="chat-blocked-msg">🚫 {blockedMsg}</div>}
         <div className="emoji-btn-wrap">
           <button
@@ -284,7 +284,6 @@ export default function Chat() {
           className="chat-page-send"
           disabled={!connected || !msgInput.trim()}
           onMouseDown={(e) => e.preventDefault()}
-          onTouchEnd={(e) => { e.preventDefault(); sendMessage(); }}
         >
           <Icon name="send" size={16} />
         </button>

@@ -373,7 +373,12 @@ export default function Call() {
     const onOffer = async ({ offer }) => {
       if (cancelled) return;
       const pc = pcRef.current;
-      if (!pc || pc.signalingState !== "stable") return;
+      if (!pc) return;
+      // Handle offer glare: if we also sent an offer, rollback ours
+      if (pc.signalingState === "have-local-offer") {
+        await pc.setLocalDescription({ type: "rollback" });
+      }
+      if (pc.signalingState !== "stable") return;
       await pc.setRemoteDescription(offer);
       await drainQueue(pc);
       const answer = await pc.createAnswer();
