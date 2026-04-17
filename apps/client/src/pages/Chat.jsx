@@ -13,9 +13,11 @@ export default function Chat() {
   const navigate      = useNavigate();
   const { accessToken } = useAuthStore();
 
-  const chatEndRef = useRef(null);
-  const inputRef   = useRef(null);
-  const inputRowRef = useRef(null);
+  const chatEndRef    = useRef(null);
+  const messagesRef   = useRef(null);
+  const inputRef      = useRef(null);
+  const inputRowRef   = useRef(null);
+  const isNearBottom  = useRef(true);
 
   const [messages,    setMessages]    = useState([]);
   const [msgInput,    setMsgInput]    = useState("");
@@ -33,9 +35,15 @@ export default function Chat() {
     showReportRef.current = showReport;
   }, [showReport]);
 
+  // Scroll to bottom without flicker — use scrollTop directly like WhatsApp
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const el = messagesRef.current;
+    if (!el) return;
+    // Only auto-scroll if user is near the bottom (within 100px)
+    if (isNearBottom.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, peerTyping]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -201,7 +209,14 @@ export default function Chat() {
         </div>
       </header>
 
-      <div className="chat-page-messages">
+      <div
+        className="chat-page-messages"
+        ref={messagesRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          isNearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+        }}
+      >
         {!connected && (
           <div className="chat-page-waiting fade-up">
             <div className="pulse-wrapper">
@@ -233,7 +248,7 @@ export default function Chat() {
             </div>
           </div>
         )}
-        <div ref={chatEndRef} />
+        <div ref={chatEndRef} style={{ height: 0 }} />
       </div>
 
       <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef}>

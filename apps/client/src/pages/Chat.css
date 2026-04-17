@@ -84,7 +84,7 @@
   flex-direction: column;
   gap: 10px;
   -webkit-overflow-scrolling: touch;
-  transition: padding-bottom 0.3s ease;
+  overscroll-behavior: contain;
 }
 @media (min-width: 400px) { .chat-page-messages { padding: 20px 18px; } }
 
