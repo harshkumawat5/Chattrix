@@ -35,14 +35,13 @@ export default function Chat() {
     showReportRef.current = showReport;
   }, [showReport]);
 
-  // Scroll to bottom without flicker — use scrollTop directly like WhatsApp
+  // Scroll to bottom smoothly — use rAF to avoid layout thrashing / flicker
   useEffect(() => {
     const el = messagesRef.current;
-    if (!el) return;
-    // Only auto-scroll if user is near the bottom (within 100px)
-    if (isNearBottom.current) {
+    if (!el || !isNearBottom.current) return;
+    requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
-    }
+    });
   }, [messages, peerTyping]);
 
   useEffect(() => {
@@ -135,8 +134,8 @@ export default function Chat() {
     emitTyping(false);
     setMessages((prev) => [...prev, { text, mine: true, timestamp: Date.now() }]);
     setMsgInput("");
-    // defer focus so iOS keyboard stays open after send
-    setTimeout(() => inputRef.current?.focus(), 0);
+    // Don't blur+refocus — keep the input focused so mobile keyboard never dismisses
+    // The form onSubmit already keeps focus on the input naturally
   };
 
   const handleTyping = (e) => {
@@ -251,7 +250,7 @@ export default function Chat() {
         <div ref={chatEndRef} style={{ height: 0 }} />
       </div>
 
-      <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef}>
+      <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef} action="#">
         {blockedMsg && <div className="chat-blocked-msg">🚫 {blockedMsg}</div>}
         <div className="emoji-btn-wrap">
           <button

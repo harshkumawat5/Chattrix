@@ -85,6 +85,7 @@
   gap: 10px;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  will-change: scroll-position;
 }
 @media (min-width: 400px) { .chat-page-messages { padding: 20px 18px; } }
 
@@ -134,7 +135,6 @@
 .chat-page-msg.theirs .chat-page-bubble {
   background: var(--msg-in);
   color: var(--text);
-  border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
 }
 
