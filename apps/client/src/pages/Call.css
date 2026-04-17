@@ -235,6 +235,19 @@
 }
 .emoji-toggle-btn:hover { transform: scale(1.15); }
 
+.chat-blocked-msg {
+  position: absolute;
+  top: -34px;
+  left: 0;
+  right: 0;
+  background: rgba(239,68,68,0.2);
+  border-top: 1px solid rgba(239,68,68,0.4);
+  color: #fca5a5;
+  font-size: 11px;
+  padding: 5px 14px;
+  text-align: center;
+}
+
 /* ── HUD ────────────────────────────────────────────────── */
 .call-hud {
   position: absolute;

@@ -5,6 +5,10 @@ import Match from "./pages/Match";
 import Call from "./pages/Call";
 import Chat from "./pages/Chat";
 import Ended from "./pages/Ended";
+import Terms from "./pages/Terms";
+import Privacy from "./pages/Privacy";
+import Safety from "./pages/Safety";
+import Contact from "./pages/Contact";
 
 const Guard = ({ children }) => {
   const { accessToken } = useAuthStore();
@@ -20,6 +24,10 @@ export default function App() {
         <Route path="/call/:sessionId"   element={<Guard><Call /></Guard>} />
         <Route path="/chat/:sessionId"   element={<Guard><Chat /></Guard>} />
         <Route path="/ended"             element={<Guard><Ended /></Guard>} />
+        <Route path="/terms"             element={<Terms />} />
+        <Route path="/privacy"           element={<Privacy />} />
+        <Route path="/safety"            element={<Safety />} />
+        <Route path="/contact"           element={<Contact />} />
         <Route path="*"                  element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

@@ -5,6 +5,9 @@ import { useAuthStore } from "../store/auth.store";
 import { connectSocket } from "../lib/socket";
 import Icon from "../components/Icon";
 import { useThemeStore } from "../store/theme.store";
+import Footer from "../components/Footer";
+import EntryPopup from "../components/EntryPopup";
+import AdBanner from "../components/AdBanner";
 import "./Landing.css";
 
 export default function Landing() {
@@ -12,14 +15,14 @@ export default function Landing() {
   const { user, accessToken, setAuth } = useAuthStore();
   const { theme, toggle } = useThemeStore();
 
+  const [showEntryPopup, setShowEntryPopup] = useState(false);
   const [username,     setUsername]     = useState("");
-  const [status,       setStatus]       = useState("idle"); // idle | checking | available | taken | invalid | loading
+  const [status,       setStatus]       = useState("idle");
   const [suggestions,  setSuggestions]  = useState([]);
   const [useGps,       setUseGps]       = useState(false);
   const [error,        setError]        = useState("");
   const debounceRef = useRef(null);
 
-  // if already logged in with valid token → go straight to match
   useEffect(() => {
     if (user && accessToken) navigate("/match");
   }, []);
@@ -66,6 +69,12 @@ export default function Landing() {
   const submit = async (e) => {
     e.preventDefault();
     if (status !== "available") return;
+    // Show entry confirmation popup before registering
+    setShowEntryPopup(true);
+  };
+
+  const handleEntryConfirm = async () => {
+    setShowEntryPopup(false);
     setStatus("loading");
     setError("");
     try {
@@ -86,6 +95,10 @@ export default function Landing() {
     }
   };
 
+  const handleEntryCancel = () => {
+    setShowEntryPopup(false);
+  };
+
   const pickSuggestion = (s) => {
     setUsername(s);
     setStatus("available");
@@ -101,6 +114,13 @@ export default function Landing() {
 
   return (
     <div className="landing">
+      {showEntryPopup && (
+        <EntryPopup
+          username={username}
+          onConfirm={handleEntryConfirm}
+          onCancel={handleEntryCancel}
+        />
+      )}
       <div className="landing-bg" />
 
       <nav className="landing-nav">
@@ -115,6 +135,7 @@ export default function Landing() {
       </nav>
 
       <main className="landing-hero fade-up">
+        <AdBanner slot={import.meta.env.VITE_AD_SLOT_LANDING} />
         <h1>
           Meet people<br />
           <span className="gradient-text">near you.</span>
@@ -174,7 +195,7 @@ export default function Landing() {
             disabled={status !== "available"}
             style={{ width: "100%" }}
           >
-            {status === "loading" ? "Entering..." : "Get started"}
+            {status === "loading" ? "Entering..." : "Get started →"}
           </button>
         </form>
 
@@ -184,6 +205,7 @@ export default function Landing() {
           <div className="stat"><span>⏱</span> No account needed</div>
         </div>
       </main>
+      <Footer />
     </div>
   );
 }

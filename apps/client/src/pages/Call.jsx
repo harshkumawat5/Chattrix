@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
 import Icon from "../components/Icon";
 import EmojiPicker from "../components/EmojiPicker";
+import ReportModal from "../components/ReportModal";
 import "./Call.css";
 
 export default function Call() {
@@ -38,6 +39,10 @@ export default function Call() {
   const [peerTyping, setPeerTyping] = useState(false);
   const [connQuality, setConnQuality] = useState(null);
   const [showEmoji,   setShowEmoji]   = useState(false);
+  const [blockedMsg,  setBlockedMsg]  = useState("");
+  const [showReport,  setShowReport]  = useState(false);
+  const showReportRef = useRef(false);
+  const moderationTimer = useRef(null);
 
   useEffect(() => {
     if (chatOpen) {
@@ -49,6 +54,37 @@ export default function Call() {
   useEffect(() => {
     connectedRef.current = connected;
   }, [connected]);
+
+  useEffect(() => {
+    showReportRef.current = showReport;
+  }, [showReport]);
+
+  // ── Frame moderation — capture remote video frame every N seconds ──
+  const captureAndCheckFrame = useCallback(async () => {
+    const video = remoteRef.current;
+    const peerId = peerUserIdRef.current;
+    if (!video || !peerId || !sessionId || !accessToken) return;
+    if (video.readyState < 2 || video.videoWidth === 0) return;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 320;
+      canvas.height = 240;
+      canvas.getContext("2d").drawImage(video, 0, 0, 320, 240);
+      const frameBase64 = canvas.toDataURL("image/jpeg", 0.7);
+      await api.post("/api/moderation/check-frame", {
+        frameBase64,
+        sessionId,
+        reportedUserId: peerId,
+      }, accessToken);
+    } catch { /* fail silently — never disrupt the call */ }
+  }, [sessionId, accessToken]);
+
+  useEffect(() => {
+    if (!connected) return;
+    const intervalMs = Number(import.meta.env.VITE_MODERATION_INTERVAL_MS) || 30000;
+    moderationTimer.current = setInterval(captureAndCheckFrame, intervalMs);
+    return () => clearInterval(moderationTimer.current);
+  }, [connected, captureAndCheckFrame]);
 
   const cleanupRecordingState = useCallback((state) => {
     if (!state) return;
@@ -356,7 +392,8 @@ export default function Call() {
       clearPendingPeerLeft();
       remoteStreamRef.current = null;
       if (remoteRef.current) remoteRef.current.srcObject = null;
-      navigate("/match?autostart=video&instant=1");
+      // don't navigate if report modal is showing
+      if (!showReportRef.current) navigate("/match?autostart=video&instant=1");
     };
     const onReceiveMessage = ({ text, fromUserId, timestamp }) => {
       if (cancelled) return;
@@ -369,6 +406,17 @@ export default function Call() {
       if (cancelled) return;
       setPeerTyping(isTyping);
     };
+    const onSocketError = ({ message }) => {
+      if (!cancelled && message?.includes("blocked")) {
+        setBlockedMsg(message);
+        setTimeout(() => setBlockedMsg(""), 4000);
+      }
+    };
+    const onModerationBan = ({ message }) => {
+      if (cancelled) return;
+      alert(message);
+      navigate("/");
+    };
 
     socket.on("ice-config", onIceConfig);
     socket.on("peer-joined", onPeerJoined);
@@ -378,6 +426,8 @@ export default function Call() {
     socket.on("peer-left", onPeerLeft);
     socket.on("receive-message", onReceiveMessage);
     socket.on("peer-typing", onPeerTyping);
+    socket.on("error", onSocketError);
+    socket.on("moderation-ban", onModerationBan);
 
     const pollTimer = setInterval(async () => {
       try {
@@ -386,7 +436,8 @@ export default function Call() {
           clearInterval(pollTimer);
           void stopRecordingAndUpload();
           exited = true;
-          if (!cancelled) navigate("/match?autostart=video&instant=1");
+          // don't navigate if report modal is showing — user is filling reason
+          if (!cancelled && !showReportRef.current) navigate("/match?autostart=video&instant=1");
         }
       } catch (error) {
         void error;
@@ -465,6 +516,8 @@ export default function Call() {
       socket.off("peer-left", onPeerLeft);
       socket.off("receive-message", onReceiveMessage);
       socket.off("peer-typing", onPeerTyping);
+      socket.off("error", onSocketError);
+      socket.off("moderation-ban", onModerationBan);
       pcRef.current?.close();
       pcRef.current = null;
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -519,10 +572,26 @@ export default function Call() {
     setMsgInput((prev) => prev + emoji);
   };
 
-  const blockPeer = async () => {
-    if (!peerUserIdRef.current) return;
-    await api.post(`/api/users/block/${peerUserIdRef.current}`, null, accessToken).catch(() => {});
-    end("completed");
+  const blockPeer = () => {
+    // Step 1: immediately disconnect from peer
+    const socket = getSocket();
+    if (socket) socket.emit("leave-room");
+    api.patch(`/api/sessions/${sessionId}/end`, { endReason: "skipped" }, accessToken).catch(() => {});
+    // Step 2: show report reason modal
+    setShowReport(true);
+  };
+
+  const submitReport = async (reason) => {
+    if (peerUserIdRef.current) {
+      await api.post(`/api/users/block/${peerUserIdRef.current}`, { reason }, accessToken).catch(() => {});
+    }
+    setShowReport(false);
+    navigate("/match?autostart=video&instant=1");
+  };
+
+  const skipReport = () => {
+    setShowReport(false);
+    navigate("/match?autostart=video&instant=1");
   };
 
   const qualityColor = { good: "var(--green)", fair: "var(--orange)", poor: "var(--red)" };
@@ -530,6 +599,9 @@ export default function Call() {
 
   return (
     <div className={"call-page" + (chatOpen ? " chat-open" : "")}>
+      {showReport && (
+        <ReportModal onSubmit={submitReport} onSkip={skipReport} />
+      )}
       <div className="call-remote">
         <video ref={remoteRef} autoPlay playsInline className="call-video" />
         {!connected && (
@@ -579,6 +651,7 @@ export default function Call() {
           <div ref={chatEndRef} />
         </div>
         <form className="chat-input-row" onSubmit={sendMessage} ref={callInputRowRef}>
+          {blockedMsg && <div className="chat-blocked-msg">🚫 {blockedMsg}</div>}
           <div className="emoji-btn-wrap">
             <button
               type="button"

@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
 import Icon from "../components/Icon";
 import EmojiPicker from "../components/EmojiPicker";
+import ReportModal from "../components/ReportModal";
 import "./Chat.css";
 
 export default function Chat() {
@@ -22,7 +23,15 @@ export default function Chat() {
   const [duration,    setDuration]    = useState(0);
   const [peerTyping,  setPeerTyping]  = useState(false);
   const [showEmoji,   setShowEmoji]   = useState(false);
+  const [blockedMsg,  setBlockedMsg]  = useState("");
+  const [showReport,  setShowReport]  = useState(false);
+  const [reportPeerId, setReportPeerId] = useState(null);
+  const showReportRef = useRef(false);
   const typingTimer = useRef(null);
+
+  useEffect(() => {
+    showReportRef.current = showReport;
+  }, [showReport]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -40,7 +49,12 @@ export default function Chat() {
 
     let cancelled = false;
 
-    const onPeerJoined  = () => { if (!cancelled) setConnected(true); };
+    const onPeerJoined  = ({ userId: peerId } = {}) => {
+      if (!cancelled) {
+        setConnected(true);
+        if (peerId) setReportPeerId(peerId);
+      }
+    };
     const onReceiveMessage = ({ text, fromUserId, timestamp }) => {
       if (cancelled) return;
       setMessages((prev) => [...prev, { text, fromUserId, timestamp, mine: false }]);
@@ -48,21 +62,29 @@ export default function Chat() {
     const onPeerLeft    = () => {
       if (cancelled) return;
       clearPendingPeerLeft();
-      navigate("/match?autostart=text&instant=1");
+      if (!showReportRef.current) navigate("/match?autostart=text&instant=1");
     };
     const onPeerTyping  = ({ isTyping }) => { if (!cancelled) setPeerTyping(isTyping); };
+    const onSocketError = ({ message }) => {
+      if (!cancelled && message?.includes("blocked")) {
+        setBlockedMsg(message);
+        setTimeout(() => setBlockedMsg(""), 4000);
+      }
+    };
 
     socket.on("peer-joined",     onPeerJoined);
     socket.on("receive-message", onReceiveMessage);
     socket.on("peer-left",       onPeerLeft);
     socket.on("peer-typing",     onPeerTyping);
+    socket.on("error",           onSocketError);
 
     const pollTimer = setInterval(async () => {
       try {
         const data = await api.get(`/api/sessions/${sessionId}`, accessToken);
         if (data.data?.status === "ended") {
           clearInterval(pollTimer);
-          if (!cancelled) navigate("/match?autostart=text&instant=1");
+          // don't navigate if report modal is showing
+          if (!cancelled && !showReportRef.current) navigate("/match?autostart=text&instant=1");
         }
       } catch {}
     }, 3000);
@@ -82,6 +104,7 @@ export default function Chat() {
       socket.off("receive-message", onReceiveMessage);
       socket.off("peer-left",       onPeerLeft);
       socket.off("peer-typing",     onPeerTyping);
+      socket.off("error",           onSocketError);
     };
   }, [sessionId, navigate, accessToken]);
 
@@ -127,8 +150,33 @@ export default function Chat() {
     navigate(reason === "skipped" ? "/match?autostart=text&instant=1" : "/ended");
   };
 
+  const blockPeer = () => {
+    // Step 1: immediately disconnect
+    const socket = getSocket();
+    if (socket) socket.emit("leave-room");
+    api.patch(`/api/sessions/${sessionId}/end`, { endReason: "skipped" }, accessToken).catch(() => {});
+    // Step 2: show report reason modal
+    setShowReport(true);
+  };
+
+  const submitReport = async (reason) => {
+    if (reportPeerId) {
+      await api.post(`/api/users/block/${reportPeerId}`, { reason }, accessToken).catch(() => {});
+    }
+    setShowReport(false);
+    navigate("/match?autostart=text&instant=1");
+  };
+
+  const skipReport = () => {
+    setShowReport(false);
+    navigate("/match?autostart=text&instant=1");
+  };
+
   return (
     <div className={`chat-page${showEmoji ? " emoji-open" : ""}`}>
+      {showReport && (
+        <ReportModal onSubmit={submitReport} onSkip={skipReport} />
+      )}
       <div className="chat-page-bg" />
 
       <header className="chat-page-header">
@@ -143,6 +191,9 @@ export default function Chat() {
         <div className="chat-page-actions">
           <button className="btn btn-ghost btn-sm" onClick={() => end("skipped")}>
             <Icon name="skipForward" size={14} /> Skip
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={blockPeer} disabled={!connected}>
+            <Icon name="ban" size={14} /> Block
           </button>
           <button className="btn btn-danger btn-sm" onClick={() => end("completed")}>
             <Icon name="endCall" size={14} /> End
@@ -186,6 +237,7 @@ export default function Chat() {
       </div>
 
       <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef}>
+        {blockedMsg && <div className="chat-blocked-msg">🚫 {blockedMsg}</div>}
         <div className="emoji-btn-wrap">
           <button
             type="button"

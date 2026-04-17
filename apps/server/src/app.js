@@ -7,6 +7,7 @@ const userRoutes = require("./routes/user.routes");
 const matchRequestRoutes = require("./routes/matchRequest.routes");
 const sessionRoutes = require("./routes/session.routes");
 const recordingRoutes = require("./routes/recording.routes");
+const moderationRoutes = require("./routes/moderation.routes");
 
 const { apiLimiter } = require("./middlewares/rateLimiter.middleware");
 
@@ -25,7 +26,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
 app.use(apiLimiter);
 
@@ -34,6 +35,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/match-requests", matchRequestRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/recordings", recordingRoutes);
+app.use("/api/moderation", moderationRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

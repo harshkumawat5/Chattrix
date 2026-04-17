@@ -1,4 +1,4 @@
-const { User, UserPreference } = require("../models");
+const { User, UserPreference, UserLog } = require("../models");
 const { resolveCoordinatesFromIp } = require("../utils/geoip");
 const { signAccessToken } = require("../utils/jwt");
 
@@ -79,6 +79,19 @@ const register = async (req, res, next) => {
     );
 
     const accessToken = signAccessToken(user);
+
+    // Permanently log IP + location for law enforcement compliance (IT Rules 2021)
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress;
+    UserLog.create({
+      username: clean,
+      ipAddress: ip,
+      coordinates: resolvedLocation.coordinates,
+      locationSource,
+      userAgent: req.headers["user-agent"]?.slice(0, 300) || null,
+      action: "register",
+      sessionUserId: user._id,
+    }).catch(() => {});
+
     return res.status(201).json({ data: user, accessToken });
   } catch (error) {
     return next(error);
@@ -149,8 +162,29 @@ const deleteUser = async (req, res, next) => {
 const blockUser = async (req, res, next) => {
   try {
     const { userId } = req.params;
+    const { reason } = req.body;
     if (userId === req.user._id.toString()) return res.status(400).json({ message: "Cannot block yourself" });
     await User.findByIdAndUpdate(req.user._id, { $addToSet: { blockedUsers: userId } });
+
+    // Log the block reason permanently
+    UserLog.create({
+      username: req.user.username || "unknown",
+      ipAddress: req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress,
+      action: "block_report",
+      sessionUserId: req.user._id,
+      coordinates: null,
+      userAgent: req.headers["user-agent"]?.slice(0, 300) || null,
+      reportedUserId: userId,
+      reportReason: reason || "no_reason",
+    }).catch(() => {});
+
+    // auto-ban: if AUTO_BAN_BLOCK_COUNT+ distinct users have blocked this user
+    const banThreshold = Number(process.env.AUTO_BAN_BLOCK_COUNT) || 5;
+    const blockCount = await User.countDocuments({ blockedUsers: userId });
+    if (blockCount >= banThreshold) {
+      await User.findByIdAndUpdate(userId, { isDiscoverable: false, status: "offline" });
+    }
+
     return res.status(200).json({ message: "User blocked" });
   } catch (error) {
     return next(error);

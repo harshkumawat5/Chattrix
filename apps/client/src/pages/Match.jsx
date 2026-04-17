@@ -4,6 +4,8 @@ import { api } from "../lib/api";
 import { getSocket, connectSocket, getPendingMatch, clearPendingMatch } from "../lib/socket";
 import { useAuthStore } from "../store/auth.store";
 import { useThemeStore } from "../store/theme.store";
+import Footer from "../components/Footer";
+import AdBanner from "../components/AdBanner";
 import "./Match.css";
 
 
@@ -250,6 +252,8 @@ export default function Match() {
           </div>
         )}
       </main>
+      <AdBanner slot={import.meta.env.VITE_AD_SLOT_MATCH} />
+      <Footer />
     </div>
   );
 }

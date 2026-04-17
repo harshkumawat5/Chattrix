@@ -229,3 +229,16 @@
 .emoji-toggle-btn:hover  { transform: scale(1.15); }
 .emoji-toggle-btn:active { transform: scale(0.9); }
 .emoji-toggle-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.chat-blocked-msg {
+  position: absolute;
+  top: -36px;
+  left: 0;
+  right: 0;
+  background: rgba(239,68,68,0.15);
+  border-top: 1px solid rgba(239,68,68,0.3);
+  color: var(--red);
+  font-size: 12px;
+  padding: 6px 14px;
+  text-align: center;
+}

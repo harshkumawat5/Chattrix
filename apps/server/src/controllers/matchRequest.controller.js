@@ -60,6 +60,13 @@ const createMatchRequest = async (req, res, next) => {
     const myIdStr    = myRequest._id.toString();
     const userIdStr  = userId.toString();
 
+    // Also exclude users who have blocked the current user (bidirectional)
+    const usersWhoBlockedMe = await User.find(
+      { blockedUsers: userId },
+      { _id: 1 }
+    ).lean();
+    usersWhoBlockedMe.forEach((u) => blockedSet.add(u._id.toString()));
+
     let candidate = candidates.find(
       (r) => r._id.toString() !== myIdStr &&
              r.user.toString() !== userIdStr &&
