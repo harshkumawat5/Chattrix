@@ -174,7 +174,7 @@ export default function Call() {
           )
           .catch(() => {});
       }
-      console.error("Recording upload failed:", error);
+      void error;
     } finally {
       recordingUploadingRef.current = false;
     }
