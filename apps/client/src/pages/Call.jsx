@@ -64,127 +64,9 @@ export default function Call() {
   }, []);
 
   const startRecordingIfNeeded = useCallback(() => {
-    if (recordingRef.current || recordingUploadingRef.current) return;
-    if (typeof MediaRecorder === "undefined") return;
-
-    const localStream = streamRef.current;
-    const remoteStream = remoteStreamRef.current;
-    if (!localStream || !remoteStream) return;
-
-    const localUserId = String(user?._id || "");
-    const peerUserId = String(peerUserIdRef.current || "");
-    if (localUserId && peerUserId && localUserId > peerUserId) return;
-
-    const recordingStream = new MediaStream();
-    const localAudioTracks = localStream.getAudioTracks();
-    const remoteAudioTracks = remoteStream.getAudioTracks();
-    const hasAnyVideo = localStream.getVideoTracks().length > 0 || remoteStream.getVideoTracks().length > 0;
-
-    let audioContext = null;
-    if (localAudioTracks.length || remoteAudioTracks.length) {
-      try {
-        audioContext = new AudioContext();
-        const destination = audioContext.createMediaStreamDestination();
-
-        if (localAudioTracks.length) {
-          const source = audioContext.createMediaStreamSource(new MediaStream(localAudioTracks));
-          source.connect(destination);
-        }
-        if (remoteAudioTracks.length) {
-          const source = audioContext.createMediaStreamSource(new MediaStream(remoteAudioTracks));
-          source.connect(destination);
-        }
-
-        destination.stream.getAudioTracks().forEach((track) => recordingStream.addTrack(track));
-      } catch {
-        audioContext = null;
-      }
-    }
-
-    let canvasStream = null;
-    let drawIntervalId = null;
-    if (hasAnyVideo && localRef.current && remoteRef.current) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 1280;
-      canvas.height = 720;
-      const ctx = canvas.getContext("2d");
-
-      if (ctx) {
-        const render = () => {
-          const width = canvas.width;
-          const height = canvas.height;
-          const remoteVideo = remoteRef.current;
-          const localVideo = localRef.current;
-
-          ctx.fillStyle = "#0b0d12";
-          ctx.fillRect(0, 0, width, height);
-
-          if (remoteVideo && remoteVideo.readyState >= 2) {
-            ctx.drawImage(remoteVideo, 0, 0, width, height);
-          }
-
-          if (localVideo && localVideo.readyState >= 2) {
-            const insetWidth = Math.floor(width * 0.28);
-            const insetHeight = Math.floor(height * 0.28);
-            const margin = 24;
-            const x = width - insetWidth - margin;
-            const y = height - insetHeight - margin;
-            ctx.drawImage(localVideo, x, y, insetWidth, insetHeight);
-          }
-
-        };
-
-        render();
-        drawIntervalId = setInterval(render, 1000 / 24);
-        canvasStream = canvas.captureStream(24);
-        const [videoTrack] = canvasStream.getVideoTracks();
-        if (videoTrack) recordingStream.addTrack(videoTrack);
-      }
-    }
-
-    if (!recordingStream.getTracks().length) {
-      if (audioContext && audioContext.state !== "closed") {
-        audioContext.close().catch(() => {});
-      }
-      return;
-    }
-
-    const hasVideoTrack = recordingStream.getVideoTracks().length > 0;
-    const candidates = hasVideoTrack
-      ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
-      : ["audio/webm;codecs=opus", "audio/webm"];
-    const supportedMime = candidates.find(
-      (mime) =>
-        typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(mime)
-    );
-
-    let recorder;
-    try {
-      recorder = supportedMime
-        ? new MediaRecorder(recordingStream, { mimeType: supportedMime })
-        : new MediaRecorder(recordingStream);
-    } catch {
-      recorder = new MediaRecorder(recordingStream);
-    }
-
-    const chunks = [];
-    recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) chunks.push(event.data);
-    };
-    recorder.start(1000);
-
-    recordingRef.current = {
-      mediaRecorder: recorder,
-      recordingStream,
-      canvasStream,
-      audioContext,
-      drawIntervalId,
-      chunks,
-      startedAt: new Date(),
-      mimeType: recorder.mimeType || supportedMime || (hasVideoTrack ? "video/webm" : "audio/webm"),
-      stopping: false,
-    };
-  }, [user?._id]);
+    // Recording is disabled — no tab indicator, upload endpoint not yet active
+    return;
+  }, []);
 
   const stopRecordingAndUpload = useCallback(async () => {
     const activeRecording = recordingRef.current;
@@ -671,7 +553,7 @@ export default function Call() {
       </div>
 
       {/* chat panel */}
-      <div className={`chat-panel ${chatOpen ? "open" : ""}`}>
+      <div className={`chat-panel ${chatOpen ? "open" : ""}${showEmoji ? " emoji-open" : ""}`}>
         <div className="chat-header">
           <span>💬 Chat</span>
           <button className="chat-close" onClick={() => setChatOpen(false)}>
@@ -710,7 +592,6 @@ export default function Call() {
               <EmojiPicker
                 onSelect={handleEmojiSelect}
                 onClose={() => setShowEmoji(false)}
-                excludeRef={callInputRowRef}
               />
             )}
           </div>

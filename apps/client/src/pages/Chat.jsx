@@ -104,7 +104,8 @@ export default function Chat() {
     emitTyping(false);
     setMessages((prev) => [...prev, { text, mine: true, timestamp: Date.now() }]);
     setMsgInput("");
-    inputRef.current?.focus();
+    // defer focus so iOS keyboard stays open after send
+    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   const handleTyping = (e) => {
@@ -185,7 +186,6 @@ export default function Chat() {
       </div>
 
       <form className="chat-page-input-row" onSubmit={sendMessage} ref={inputRowRef}>
-        {/* emoji picker */}
         <div className="emoji-btn-wrap">
           <button
             type="button"
@@ -200,7 +200,6 @@ export default function Chat() {
             <EmojiPicker
               onSelect={handleEmojiSelect}
               onClose={() => setShowEmoji(false)}
-              excludeRef={inputRowRef}
             />
           )}
         </div>

@@ -6,20 +6,20 @@
   overflow: hidden;
 }
 
-/* when emoji picker is open on mobile, push input row up above picker */
+/* mobile: when emoji open, lift input row above the fixed picker */
 @media (max-width: 480px) {
   .chat-page.emoji-open .chat-page-input-row {
     position: fixed;
-    bottom: 300px;
+    bottom: 260px;
     left: 0;
     right: 0;
     z-index: 310;
     background: var(--bg2);
     border-top: 1px solid var(--border);
+    padding: 8px 14px;
   }
-
   .chat-page.emoji-open .chat-page-messages {
-    padding-bottom: 360px;
+    padding-bottom: 330px;
   }
 }
 

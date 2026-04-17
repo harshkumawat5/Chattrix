@@ -176,6 +176,20 @@
   z-index: 310;
 }
 
+/* mobile: lift input row above emoji picker when open */
+@media (max-width: 480px) {
+  .chat-panel.emoji-open .chat-input-row {
+    position: fixed;
+    bottom: 260px;
+    left: 0;
+    right: 0;
+    z-index: 310;
+    background: rgba(10,6,20,0.97);
+    border-top: 1px solid rgba(139,92,246,0.3);
+    padding: 8px 14px;
+  }
+}
+
 .chat-input {
   flex: 1;
   padding: 10px 14px;
