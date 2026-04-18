@@ -65,7 +65,6 @@ const register = async (req, res, next) => {
       resolvedLocation = { type: "Point", coordinates: location.coordinates };
       locationSource = "gps";
     } else {
-      const ip = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress;
       const geo = await resolveCoordinatesFromIp(ip);
       resolvedLocation = { type: "Point", coordinates: geo ? geo.coordinates : [0, 0] };
     }
