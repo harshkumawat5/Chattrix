@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuthStore } from "../store/auth.store";
-import { connectSocket } from "../lib/socket";
+import { connectSocket, disconnectSocket } from "../lib/socket";
 import Icon from "../components/Icon";
 import { useThemeStore } from "../store/theme.store";
 import Footer from "../components/Footer";
@@ -12,8 +12,12 @@ import "./Landing.css";
 
 export default function Landing() {
   const navigate = useNavigate();
-  const { user, accessToken, setAuth } = useAuthStore();
+  const [searchParams] = useSearchParams();
+  const { user, accessToken, setAuth, clearAuth } = useAuthStore();
   const { theme, toggle } = useThemeStore();
+
+  const isBanned = searchParams.get("banned") === "1";
+  const banReason = searchParams.get("reason") || "Your account has been permanently suspended due to a policy violation.";
 
   const [showEntryPopup, setShowEntryPopup] = useState(false);
   const [username,     setUsername]     = useState("");
@@ -24,6 +28,12 @@ export default function Landing() {
   const debounceRef = useRef(null);
 
   useEffect(() => {
+    if (isBanned) {
+      // Clear session so banned user can't navigate back to /match
+      clearAuth();
+      disconnectSocket();
+      return;
+    }
     if (user && accessToken) navigate("/match");
   }, []);
 
@@ -188,6 +198,11 @@ export default function Landing() {
           </div>
 
           {error && <div className="auth-error">{error}</div>}
+          {isBanned && (
+            <div className="auth-error" style={{ background: "rgba(239,68,68,0.12)", borderColor: "rgba(239,68,68,0.4)" }}>
+              🚫 {banReason}
+            </div>
+          )}
 
           <button
             className="btn btn-primary btn-lg"

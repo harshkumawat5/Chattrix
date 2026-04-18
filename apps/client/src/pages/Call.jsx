@@ -548,8 +548,15 @@ export default function Call() {
     };
     const onModerationBan = ({ message }) => {
       if (cancelled) return;
-      alert(message);
-      navigate("/");
+      cancelled = true;
+      exited = true;
+      // Stop all media
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      pcRef.current?.close();
+      pcRef.current = null;
+      // Clear auth and redirect to home with ban message
+      navigate(`/?banned=1&reason=${encodeURIComponent(message)}`);
     };
 
     socket.on("ice-config", onIceConfig);

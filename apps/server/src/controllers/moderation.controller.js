@@ -17,14 +17,22 @@ const getClient = () => {
   return rekognitionClient;
 };
 
-// Labels Rekognition returns for explicit/illegal content
+// Labels Rekognition returns — only ban for sexual content and weapons
 const FLAGGED_LABELS = [
-  "Explicit Nudity", "Nudity", "Graphic Male Nudity", "Graphic Female Nudity",
-  "Sexual Activity", "Illustrated Explicit Nudity", "Adult Content",
-  "Partial Nudity", "Barechested Male",
-  "Weapons", "Weapon Violence", "Knife", "Gun",
-  "Drugs", "Drug Products", "Drug Use", "Pills",
-  "Violence", "Graphic Violence",
+  // Sexual / nudity / explicit
+  "Explicit Nudity",
+  "Nudity",
+  "Graphic Male Nudity",
+  "Graphic Female Nudity",
+  "Sexual Activity",
+  "Illustrated Explicit Nudity",
+  "Adult Content",
+  "Partial Nudity",
+  // Weapons
+  "Weapons",
+  "Weapon Violence",
+  "Knife",
+  "Gun",
 ];
 
 /**
@@ -32,9 +40,12 @@ const FLAGGED_LABELS = [
  * Called from registration to block banned users from re-entering.
  */
 const isIpBanned = async (ipAddress) => {
+  // Never ban localhost — allows testing without getting permanently locked out
+  if (!ipAddress || ipAddress === "::1" || ipAddress === "127.0.0.1") return false;
   const record = await UserLog.findOne({
     ipAddress,
-    reportReason: /^AUTO_MODERATION:/,
+    action: "block_report",
+    reportReason: { $regex: "^AUTO_MODERATION:", $options: "i" },
   }).lean();
   return !!record;
 };
