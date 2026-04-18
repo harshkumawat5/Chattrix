@@ -121,14 +121,14 @@ export default function Call() {
 
     const localUserId = String(user?._id || "");
     const peerUserId = String(peerUserIdRef.current || "");
-    // Only one peer records (the one with the lexicographically smaller userId)
+    // Only one peer records to avoid duplicates
     if (localUserId && peerUserId && localUserId > peerUserId) return;
 
     const recordingStream = new MediaStream();
+
+    // ── Audio: mix both sides via AudioContext (cloned tracks = no tab indicator) ──
     const localAudioTracks = localStream.getAudioTracks();
     const remoteAudioTracks = remoteStream.getAudioTracks();
-
-    // Use AudioContext to mix both audio tracks — clone to avoid browser recording indicator
     let audioContext = null;
     if (localAudioTracks.length || remoteAudioTracks.length) {
       try {
@@ -144,17 +144,55 @@ export default function Call() {
       } catch { audioContext = null; }
     }
 
+    // ── Video: draw remote (full) + local (PiP) onto canvas ──
+    let canvasStream = null;
+    let drawIntervalId = null;
+    const hasVideo = localStream.getVideoTracks().length > 0 || remoteStream.getVideoTracks().length > 0;
+    if (hasVideo && localRef.current && remoteRef.current) {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 1280;
+        canvas.height = 720;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const render = () => {
+            const rv = remoteRef.current;
+            const lv = localRef.current;
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, 1280, 720);
+            if (rv && rv.readyState >= 2) ctx.drawImage(rv, 0, 0, 1280, 720);
+            if (lv && lv.readyState >= 2) {
+              // PiP: bottom-right corner
+              ctx.drawImage(lv, 1280 - 320 - 16, 720 - 180 - 16, 320, 180);
+            }
+          };
+          render();
+          drawIntervalId = setInterval(render, 1000 / 24);
+          canvasStream = canvas.captureStream(24);
+          const [vt] = canvasStream.getVideoTracks();
+          if (vt) recordingStream.addTrack(vt);
+        }
+      } catch { canvasStream = null; }
+    }
+
     if (!recordingStream.getTracks().length) {
       if (audioContext && audioContext.state !== "closed") audioContext.close().catch(() => {});
       return;
     }
 
-    const candidates = ["audio/webm;codecs=opus", "audio/webm"];
-    const supportedMime = candidates.find(m => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(m));
+    const hasVideoTrack = recordingStream.getVideoTracks().length > 0;
+    const candidates = hasVideoTrack
+      ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+      : ["audio/webm;codecs=opus", "audio/webm"];
+    const supportedMime = candidates.find(m =>
+      typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(m)
+    );
 
     let recorder;
     try {
-      recorder = supportedMime ? new MediaRecorder(recordingStream, { mimeType: supportedMime }) : new MediaRecorder(recordingStream);
+      recorder = supportedMime
+        ? new MediaRecorder(recordingStream, { mimeType: supportedMime })
+        : new MediaRecorder(recordingStream);
     } catch { recorder = new MediaRecorder(recordingStream); }
 
     const chunks = [];
@@ -164,12 +202,12 @@ export default function Call() {
     recordingRef.current = {
       mediaRecorder: recorder,
       recordingStream,
-      canvasStream: null,
+      canvasStream,
       audioContext,
-      drawIntervalId: null,
+      drawIntervalId,
       chunks,
       startedAt: new Date(),
-      mimeType: recorder.mimeType || supportedMime || "audio/webm",
+      mimeType: recorder.mimeType || supportedMime || (hasVideoTrack ? "video/webm" : "audio/webm"),
       stopping: false,
     };
   }, [user?._id]);

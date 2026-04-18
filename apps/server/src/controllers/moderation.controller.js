@@ -27,6 +27,18 @@ const FLAGGED_LABELS = [
   "Violence", "Graphic Violence",
 ];
 
+/**
+ * Check if an IP is permanently banned.
+ * Called from registration to block banned users from re-entering.
+ */
+const isIpBanned = async (ipAddress) => {
+  const record = await UserLog.findOne({
+    ipAddress,
+    reportReason: /^AUTO_MODERATION:/,
+  }).lean();
+  return !!record;
+};
+
 const checkFrame = async (req, res) => {
   try {
     const enabled = process.env.MODERATION_ENABLED !== "false";
@@ -75,14 +87,17 @@ const checkFrame = async (req, res) => {
       const bannedUser = await User.findByIdAndUpdate(
         reportedUserId,
         { isDiscoverable: false, status: "offline" },
-        { returnDocument: "before" }
+        { new: false }
       ).catch(() => null);
 
-      // 3. Permanent IP log for law enforcement (never TTL-deleted)
-      const reporterIp = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress;
-      UserLog.create({
+      // 3. Get the banned user's IP from their UserLog
+      const bannedUserLog = await UserLog.findOne({ sessionUserId: reportedUserId }).sort({ createdAt: -1 }).lean();
+      const bannedIp = bannedUserLog?.ipAddress || "unknown";
+
+      // 4. Permanent IP ban log — checked on every registration
+      await UserLog.create({
         username: bannedUser?.username || "unknown",
-        ipAddress: reporterIp,
+        ipAddress: bannedIp,
         coordinates: bannedUser?.location?.coordinates || null,
         locationSource: bannedUser?.locationSource || "ip",
         userAgent: req.headers["user-agent"]?.slice(0, 300) || null,
@@ -92,26 +107,22 @@ const checkFrame = async (req, res) => {
         reportReason: `AUTO_MODERATION: ${reason} (confidence: ${confidence.toFixed(1)}%)`,
       }).catch(() => {});
 
-      // 4. Notify + disconnect the banned user's socket
+      // 5. Notify + force disconnect the banned user's socket
       const reportedSocket = getSocket(reportedUserId.toString());
       if (reportedSocket) {
         reportedSocket.emit("moderation-ban", {
           message: "Your session was ended due to a policy violation. Your account has been permanently suspended.",
         });
-        // Force disconnect after a brief delay so the message arrives
         setTimeout(() => reportedSocket.disconnect(true), 500);
       }
-
-      console.log(`[Moderation] BANNED user ${reportedUserId} — ${reason} (${confidence.toFixed(1)}%) — IP: ${reporterIp}`);
 
       return res.status(200).json({ flagged: true, reason, confidence });
     }
 
     return res.status(200).json({ flagged: false });
   } catch {
-    // Never crash the call over moderation errors — fail open
     return res.status(200).json({ flagged: false, reason: "error" });
   }
 };
 
-module.exports = { checkFrame };
+module.exports = { checkFrame, isIpBanned };

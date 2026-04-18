@@ -1,6 +1,7 @@
 const { User, UserPreference, UserLog } = require("../models");
 const { resolveCoordinatesFromIp } = require("../utils/geoip");
 const { signAccessToken } = require("../utils/jwt");
+const { isIpBanned } = require("./moderation.controller");
 
 // ── helpers ──────────────────────────────────────────────────────
 
@@ -50,6 +51,13 @@ const register = async (req, res, next) => {
       return res.status(409).json({ message: "Username already taken", suggestions });
     }
 
+    // Check if this IP is permanently banned due to moderation violation
+    const ip = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress;
+    const banned = await isIpBanned(ip);
+    if (banned) {
+      return res.status(403).json({ message: "Your access has been permanently suspended due to a policy violation." });
+    }
+
     let resolvedLocation;
     let locationSource = "ip";
 
@@ -81,7 +89,6 @@ const register = async (req, res, next) => {
     const accessToken = signAccessToken(user);
 
     // Permanently log IP + location for law enforcement compliance (IT Rules 2021)
-    const ip = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress;
     UserLog.create({
       username: clean,
       ipAddress: ip,
