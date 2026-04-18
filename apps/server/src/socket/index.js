@@ -1,12 +1,13 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const fetch = require("node-fetch");
+const { createAdapter } = require("@socket.io/redis-adapter");
 const { register, unregister } = require("./registry");
 const { registerSessionHandlers } = require("./handlers/session.handler");
 const { registerSignalHandlers } = require("./handlers/signal.handler");
 
 // ── ICE config — Metered TURN + Google STUN ──────────────────────
-// Credentials fetched from Metered API on server side only.
+// Metered.ca: free 500MB/month TURN relay. Most calls use STUN (free, unlimited).
 // API key is NEVER sent to the client — only the resulting ice servers are.
 // Cached for 12h since Metered credentials are valid for 24h.
 
@@ -14,7 +15,7 @@ let iceCache = { servers: null, fetchedAt: 0 };
 const ICE_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
 
 const fallbackStun = () =>
-  (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302")
+  (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302,stun:stun2.l.google.com:19302")
     .split(",")
     .map((url) => ({ urls: url.trim() }))
     .filter((s) => s.urls);
@@ -43,12 +44,15 @@ const getIceServers = async () => {
 
     if (!res.ok) throw new Error(`Metered API returned ${res.status}`);
 
-    const servers = await res.json();
+    const turnServers = await res.json();
+    // Always include STUN fallbacks alongside TURN
+    const stun = fallbackStun();
+    const servers = [...turnServers, ...stun];
     iceCache = { servers, fetchedAt: now };
-    console.log(`[ICE] Fetched ${servers.length} ICE servers from Metered`);
+    console.log(`[ICE] Fetched ${turnServers.length} TURN + ${stun.length} STUN servers`);
     return servers;
   } catch (err) {
-    console.error("[ICE] Failed to fetch Metered credentials:", err.message, "— falling back to STUN");
+    console.error("[ICE] Metered TURN failed:", err.message, "— falling back to STUN only");
     return fallbackStun();
   }
 };
@@ -92,7 +96,7 @@ const isMessageAllowed = (userId) => {
 };
 
 // ── Init ──────────────────────────────────────────────────────────
-const initSocket = (httpServer) => {
+const initSocket = (httpServer, redisClients) => {
   const allowedOrigins = (process.env.CLIENT_ORIGIN || "*").split(",").map((o) => o.trim());
 
   const io = new Server(httpServer, {
@@ -104,6 +108,12 @@ const initSocket = (httpServer) => {
       credentials: true,
     },
   });
+
+  // ── Redis adapter for horizontal scaling (multiple server instances) ──
+  if (redisClients) {
+    io.adapter(createAdapter(redisClients.pub, redisClients.sub));
+    console.log("[Socket.IO] Redis adapter attached — horizontal scaling enabled");
+  }
 
   // warm up ICE cache on startup so first connection is instant
   getIceServers().catch(() => {});
