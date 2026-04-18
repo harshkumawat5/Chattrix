@@ -28,11 +28,20 @@ const FLAGGED_LABELS = [
   "Illustrated Explicit Nudity",
   "Adult Content",
   "Partial Nudity",
+  "Barechested Male",
+  "Female Swimwear Or Underwear",
+  "Male Swimwear Or Underwear",
+  "Revealing Clothes",
+  "Suggestive",
+  "Sexual Situations",
+  "Obstructed Intimate Parts",
+  "Intimate Parts",
   // Weapons
   "Weapons",
   "Weapon Violence",
   "Knife",
   "Gun",
+  "Explosives",
 ];
 
 /**
