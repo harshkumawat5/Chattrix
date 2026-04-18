@@ -43,6 +43,19 @@ export default function Call() {
   const [showReport,  setShowReport]  = useState(false);
   const showReportRef = useRef(false);
   const moderationTimer = useRef(null);
+  const moderationIntervalRef = useRef(30000); // default, overridden by server config
+
+  // Fetch moderation interval from server on mount
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_URL}/health`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.config?.moderationFrameIntervalMs) {
+          moderationIntervalRef.current = d.config.moderationFrameIntervalMs;
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (chatOpen) {
@@ -81,8 +94,7 @@ export default function Call() {
 
   useEffect(() => {
     if (!connected) return;
-    const intervalMs = Number(import.meta.env.VITE_MODERATION_INTERVAL_MS) || 30000;
-    moderationTimer.current = setInterval(captureAndCheckFrame, intervalMs);
+    moderationTimer.current = setInterval(captureAndCheckFrame, moderationIntervalRef.current);
     return () => clearInterval(moderationTimer.current);
   }, [connected, captureAndCheckFrame]);
 
