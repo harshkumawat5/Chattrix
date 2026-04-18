@@ -1,5 +1,5 @@
 const { RekognitionClient, DetectModerationLabelsCommand } = require("@aws-sdk/client-rekognition");
-const { User, ChatSession } = require("../models");
+const { User, ChatSession, UserLog } = require("../models");
 const { getSocket } = require("../socket/registry");
 
 // Lazy-init client so missing credentials don't crash startup
@@ -63,28 +63,48 @@ const checkFrame = async (req, res) => {
 
     if (flaggedLabel) {
       const reason = flaggedLabel.Name;
+      const confidence = flaggedLabel.Confidence;
 
-      // End the session
+      // 1. End the session immediately
       await ChatSession.findOneAndUpdate(
         { _id: sessionId, status: "active" },
         { status: "ended", endedAt: new Date(), endReason: "error" }
       ).catch(() => {});
 
-      // Ban the reported user
-      await User.findByIdAndUpdate(reportedUserId, {
-        isDiscoverable: false,
-        status: "offline",
+      // 2. Ban the user — set undiscoverable + offline
+      const bannedUser = await User.findByIdAndUpdate(
+        reportedUserId,
+        { isDiscoverable: false, status: "offline" },
+        { returnDocument: "before" }
+      ).catch(() => null);
+
+      // 3. Permanent IP log for law enforcement (never TTL-deleted)
+      const reporterIp = req.headers["x-forwarded-for"]?.split(",")[0].trim() || req.socket.remoteAddress;
+      UserLog.create({
+        username: bannedUser?.username || "unknown",
+        ipAddress: reporterIp,
+        coordinates: bannedUser?.location?.coordinates || null,
+        locationSource: bannedUser?.locationSource || "ip",
+        userAgent: req.headers["user-agent"]?.slice(0, 300) || null,
+        action: "block_report",
+        sessionUserId: reportedUserId,
+        reportedUserId: reportedUserId,
+        reportReason: `AUTO_MODERATION: ${reason} (confidence: ${confidence.toFixed(1)}%)`,
       }).catch(() => {});
 
-      // Notify reported user via socket
+      // 4. Notify + disconnect the banned user's socket
       const reportedSocket = getSocket(reportedUserId.toString());
       if (reportedSocket) {
         reportedSocket.emit("moderation-ban", {
-          message: "Your session was ended due to a policy violation. Your account has been suspended.",
+          message: "Your session was ended due to a policy violation. Your account has been permanently suspended.",
         });
+        // Force disconnect after a brief delay so the message arrives
+        setTimeout(() => reportedSocket.disconnect(true), 500);
       }
 
-      return res.status(200).json({ flagged: true, reason, confidence: flaggedLabel.Confidence });
+      console.log(`[Moderation] BANNED user ${reportedUserId} — ${reason} (${confidence.toFixed(1)}%) — IP: ${reporterIp}`);
+
+      return res.status(200).json({ flagged: true, reason, confidence });
     }
 
     return res.status(200).json({ flagged: false });

@@ -12,6 +12,17 @@ const { auth } = require("../middlewares/auth.middleware");
 
 const router = express.Router();
 
+// ── Recording feature toggle — disable entirely from .env ────────
+const recordingGate = (req, res, next) => {
+  const enabled = process.env.RECORDING_ENABLED !== "false";
+  if (!enabled) {
+    return res.status(503).json({ message: "Recording is disabled" });
+  }
+  return next();
+};
+
+router.use(recordingGate);
+
 router.post("/presign",                auth, createRecordingPresign);
 router.post("/finalize",               auth, finalizeRecording);
 router.post("/",                       auth, createRecording);
