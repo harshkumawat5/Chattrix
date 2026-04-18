@@ -112,9 +112,67 @@ export default function Call() {
   }, []);
 
   const startRecordingIfNeeded = useCallback(() => {
-    // Recording is disabled — no tab indicator, upload endpoint not yet active
-    return;
-  }, []);
+    if (recordingRef.current || recordingUploadingRef.current) return;
+    if (typeof MediaRecorder === "undefined") return;
+
+    const localStream = streamRef.current;
+    const remoteStream = remoteStreamRef.current;
+    if (!localStream || !remoteStream) return;
+
+    const localUserId = String(user?._id || "");
+    const peerUserId = String(peerUserIdRef.current || "");
+    // Only one peer records (the one with the lexicographically smaller userId)
+    if (localUserId && peerUserId && localUserId > peerUserId) return;
+
+    const recordingStream = new MediaStream();
+    const localAudioTracks = localStream.getAudioTracks();
+    const remoteAudioTracks = remoteStream.getAudioTracks();
+
+    // Use AudioContext to mix both audio tracks — clone to avoid browser recording indicator
+    let audioContext = null;
+    if (localAudioTracks.length || remoteAudioTracks.length) {
+      try {
+        audioContext = new AudioContext();
+        const destination = audioContext.createMediaStreamDestination();
+        if (localAudioTracks.length) {
+          audioContext.createMediaStreamSource(new MediaStream(localAudioTracks.map(t => t.clone()))).connect(destination);
+        }
+        if (remoteAudioTracks.length) {
+          audioContext.createMediaStreamSource(new MediaStream(remoteAudioTracks.map(t => t.clone()))).connect(destination);
+        }
+        destination.stream.getAudioTracks().forEach(t => recordingStream.addTrack(t));
+      } catch { audioContext = null; }
+    }
+
+    if (!recordingStream.getTracks().length) {
+      if (audioContext && audioContext.state !== "closed") audioContext.close().catch(() => {});
+      return;
+    }
+
+    const candidates = ["audio/webm;codecs=opus", "audio/webm"];
+    const supportedMime = candidates.find(m => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(m));
+
+    let recorder;
+    try {
+      recorder = supportedMime ? new MediaRecorder(recordingStream, { mimeType: supportedMime }) : new MediaRecorder(recordingStream);
+    } catch { recorder = new MediaRecorder(recordingStream); }
+
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
+    recorder.start(1000);
+
+    recordingRef.current = {
+      mediaRecorder: recorder,
+      recordingStream,
+      canvasStream: null,
+      audioContext,
+      drawIntervalId: null,
+      chunks,
+      startedAt: new Date(),
+      mimeType: recorder.mimeType || supportedMime || "audio/webm",
+      stopping: false,
+    };
+  }, [user?._id]);
 
   const stopRecordingAndUpload = useCallback(async () => {
     const activeRecording = recordingRef.current;
