@@ -1,60 +1,38 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
-const fetch = require("node-fetch");
 const { createAdapter } = require("@socket.io/redis-adapter");
 const { register, unregister } = require("./registry");
 const { registerSessionHandlers } = require("./handlers/session.handler");
 const { registerSignalHandlers } = require("./handlers/signal.handler");
 
-// ── ICE config — Metered TURN + Google STUN ──────────────────────
-// Metered.ca: free 500MB/month TURN relay. Most calls use STUN (free, unlimited).
-// API key is NEVER sent to the client — only the resulting ice servers are.
-// Cached for 12h since Metered credentials are valid for 24h.
+// ── ICE config — Azure TURN + Google STUN ────────────────────────
+// Azure VM Coturn TURN server + Google STUN fallbacks
 
-let iceCache = { servers: null, fetchedAt: 0 };
-const ICE_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
-
-const fallbackStun = () =>
-  (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302,stun:stun2.l.google.com:19302")
+const getIceServers = () => {
+  const stun = (process.env.STUN_SERVERS || "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302,stun:stun2.l.google.com:19302")
     .split(",")
     .map((url) => ({ urls: url.trim() }))
     .filter((s) => s.urls);
 
-const getIceServers = async () => {
-  const now = Date.now();
+  const turnUrl = process.env.TURN_SERVER_URL;
+  const turnUser = process.env.TURN_USERNAME;
+  const turnPass = process.env.TURN_PASSWORD;
 
-  // return cache if still fresh
-  if (iceCache.servers && now - iceCache.fetchedAt < ICE_CACHE_TTL) {
-    return iceCache.servers;
+  if (!turnUrl || !turnUser || !turnPass) {
+    console.warn("[ICE] TURN credentials not set — using STUN only");
+    return stun;
   }
 
-  const appName = process.env.METERED_APP_NAME;
-  const apiKey  = process.env.METERED_API_KEY;
+  const turn = [
+    {
+      urls: turnUrl,
+      username: turnUser,
+      credential: turnPass,
+    },
+  ];
 
-  if (!appName || !apiKey) {
-    console.warn("[ICE] METERED_APP_NAME or METERED_API_KEY not set — using STUN only");
-    return fallbackStun();
-  }
-
-  try {
-    const res = await fetch(
-      `https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`,
-      { timeout: 5000 }
-    );
-
-    if (!res.ok) throw new Error(`Metered API returned ${res.status}`);
-
-    const turnServers = await res.json();
-    // Always include STUN fallbacks alongside TURN
-    const stun = fallbackStun();
-    const servers = [...turnServers, ...stun];
-    iceCache = { servers, fetchedAt: now };
-    console.log(`[ICE] Fetched ${turnServers.length} TURN + ${stun.length} STUN servers`);
-    return servers;
-  } catch (err) {
-    console.error("[ICE] Metered TURN failed:", err.message, "— falling back to STUN only");
-    return fallbackStun();
-  }
+  console.log(`[ICE] Using Azure TURN + ${stun.length} STUN servers`);
+  return [...turn, ...stun];
 };
 
 // ── Connection rate limit ─────────────────────────────────────────
@@ -115,8 +93,8 @@ const initSocket = (httpServer, redisClients) => {
     console.log("[Socket.IO] Redis adapter attached — horizontal scaling enabled");
   }
 
-  // warm up ICE cache on startup so first connection is instant
-  getIceServers().catch(() => {});
+  // warm up ICE config on startup
+  const iceServers = getIceServers();
 
   // ── Connection rate limit ──────────────────────────────────────
   io.use((socket, next) => {
@@ -148,8 +126,8 @@ const initSocket = (httpServer, redisClients) => {
 
     register(userId, socket);
 
-    // send ICE config — includes TURN credentials from Metered
-    const iceServers = await getIceServers();
+    // send ICE config — includes TURN credentials from Azure VM
+    const iceServers = getIceServers();
     socket.emit("ice-config", { iceServers });
 
     // ── Message rate limit ───────────────────────────────────────
